@@ -1,0 +1,9 @@
+{
+  "settings": {
+    "defaultFlipped": false,
+    "defaultBoardSize": 500,
+    "enableEngine": true,
+    "engineDepth": 16,
+    "animationDuration": 100
+  }
+}

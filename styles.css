@@ -1,0 +1,1412 @@
+.chess-plugin-container {
+  padding: 1rem;
+  background: var(--background-primary);
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* On mobile, allow the container to expand to fit content */
+@media (max-width: 1023px) {
+  .chess-plugin-container {
+    overflow: visible;
+    height: auto !important;
+    min-height: auto !important;
+  }
+}
+
+.chess-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "board"
+    "boardinfo"
+    "info";
+  gap: 1.5rem;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+}
+
+@media (min-width: 1024px) {
+  .chess-layout {
+    grid-template-columns: auto 4px 1fr;
+    /* CRITICAL FIX: Use minmax(0, auto) for row 1 and minmax(0, 1fr) for row 2
+       This allows rows to shrink to 0 if needed, preventing content from forcing minimum heights */
+    grid-template-rows: minmax(0, auto) minmax(0, 1fr);
+    grid-template-areas:
+      "board boardresizer info"
+      "boardinfo boardresizer info";
+    gap: 0;
+    align-items: stretch;
+    height: 100%;
+    min-height: 0;
+    /* Ensure grid doesn't overflow its container */
+    overflow: hidden;
+  }
+}
+
+.chess-board-section {
+  grid-area: board;
+  max-width: 100%;
+  box-sizing: border-box;
+  background: var(--background-secondary);
+  padding: 1rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.chess-board-info-section {
+  grid-area: boardinfo;
+  margin-top: 1rem;
+  box-sizing: border-box;
+  background: var(--background-secondary);
+  padding: 0.75rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  /* CRITICAL: These prevent the section from forcing the grid row to grow */
+  min-height: 0;
+  max-height: 100%; /* Constrain to available grid cell height */
+  /* Allow the section to shrink if needed */
+  flex-shrink: 1;
+}
+
+.chess-board-info-section:empty,
+.chess-board-info-section[style*="display: none"] {
+  display: none !important;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.chess-game-info {
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Allow shrinking within the section */
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+@media (min-width: 1024px) {
+  .chess-board-info-section {
+    /* CRITICAL: Fill the grid cell height, don't size to content */
+    height: 100%;
+    /* Allow internal scrolling */
+    overflow-y: auto;
+    /* This is already set, but be explicit */
+    min-height: 0;
+  }
+  
+  .chess-board-info-section:empty,
+  .chess-board-info-section[style*="display: none"] {
+    display: none !important;
+  }
+}
+
+.chess-board-resizer {
+  grid-area: boardresizer;
+}
+
+.chess-info-section {
+  grid-area: info;
+  margin-left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 250px;
+  background: var(--background-secondary);
+  padding: 0.75rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  /* CRITICAL: These properties work together to allow proper shrinking */
+  overflow: hidden;
+  /* Fill the grid cell */
+  height: 100%;
+  /* CRITICAL: Allow shrinking to 0 */
+  min-height: 0;
+  max-height: 100%;
+}
+
+@media (min-width: 1024px) {
+  .chess-info-section {
+    margin-left: 0.75rem;
+  }
+  
+  .chess-board-info-section {
+    margin-top: 1rem;
+  }
+}
+
+.chess-resizer {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .chess-resizer {
+    display: block;
+    width: 4px;
+    background: var(--background-modifier-border);
+    cursor: ew-resize;
+    position: relative;
+    margin: 0 0.75rem;
+    height: 100%;
+  }
+  
+  .chess-resizer:hover {
+    background: var(--interactive-accent);
+  }
+  
+  .chess-resizer::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -4px;
+    right: -4px;
+  }
+}
+
+.chess-height-resizer {
+  height: 4px;
+  background: var(--background-modifier-border);
+  cursor: ns-resize;
+  position: absolute;
+  width: calc(100% - 2rem);
+  bottom: 0;
+  left: 1rem;
+  z-index: 100;
+}
+
+.chess-height-resizer:hover {
+  background: var(--interactive-accent);
+}
+
+.chess-height-resizer::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  bottom: -4px;
+}
+
+.chess-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.chess-title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.chess-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.chess-flip-btn,
+.chess-reset-btn {
+  background: var(--interactive-normal);
+  border: none;
+  padding: 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1.25rem;
+  transition: background 0.2s;
+  min-width: 36px;
+}
+
+.chess-flip-btn:hover,
+.chess-reset-btn:hover {
+  background: var(--interactive-hover);
+}
+
+.chess-board-wrapper {
+  position: relative;
+  width: 100% !important;
+  aspect-ratio: 1;
+  max-width: 100%;
+  flex-shrink: 0;
+  flex-grow: 0;
+  box-sizing: border-box;
+}
+
+.chess-board {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  border: 3px solid #312e2b;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #769656;
+}
+
+.chess-row {
+  display: contents;
+}
+
+.chess-square {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  user-select: none;
+  width: 100%;
+  height: 100%;
+}
+
+.chess-square.light {
+  background-color: #eeeed2;
+}
+
+.chess-square.dark {
+  background-color: #769656;
+}
+
+.chess-square.move-from {
+  background-color: rgba(155, 199, 210, 0.41) !important;
+}
+
+.chess-square.move-to {
+  background-color: rgba(155, 199, 210, 0.71) !important;
+}
+
+.chess-square.highlighted {
+  background-color: rgba(235, 97, 80, 0.8) !important;
+}
+
+.chess-square.selected.light {
+  background-color: #f6f669;
+}
+
+.chess-square.selected.dark {
+  background-color: #baca44;
+}
+
+.chess-square.legal-move::after {
+  content: '';
+  position: absolute;
+  width: 33%;
+  height: 33%;
+  background-color: rgba(0, 0, 0, 0.15);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.chess-square.legal-move.chess-square:has(.chess-piece)::after {
+  width: 90%;
+  height: 90%;
+  background-color: transparent;
+  border: 4px solid rgba(0, 0, 0, 0.15);
+  border-radius: 50%;
+}
+
+.chess-square:hover {
+  opacity: 0.95;
+}
+
+.chess-piece {
+  font-size: 64px;
+  line-height: 1;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  z-index: 25;
+  position: relative;
+}
+
+.chess-piece:active {
+  cursor: grabbing;
+}
+
+.chess-piece-dragging {
+  cursor: grabbing !important;
+  opacity: 1 !important;
+  pointer-events: none !important;
+  will-change: left, top;
+  /* Ensure the drag clone looks like a piece */
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background-size: 80% !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  /* Smooth movement */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}
+
+/* Prevent text selection during drag */
+.chess-board {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Ensure pieces don't trigger browser drag behavior */
+.chess-piece {
+  -webkit-user-drag: none;
+  -khtml-user-drag: none;
+  -moz-user-drag: none;
+  -o-user-drag: none;
+  user-drag: none;
+}
+
+.chess-piece.white {
+  color: #f0f0f0;
+  text-shadow: 
+    -2px -2px 0 #000,
+    2px -2px 0 #000,
+    -2px 2px 0 #000,
+    2px 2px 0 #000,
+    -2px 0 0 #000,
+    2px 0 0 #000,
+    0 -2px 0 #000,
+    0 2px 0 #000;
+}
+
+.chess-piece.black {
+  color: #1a1a1a;
+}
+
+.chess-file-label,
+.chess-rank-label {
+  position: absolute;
+  font-size: 11px;
+  font-weight: bold;
+  pointer-events: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  z-index: 15;
+}
+
+.chess-file-label {
+  bottom: 2px;
+  right: 4px;
+}
+
+.chess-rank-label {
+  top: 2px;
+  left: 4px;
+}
+
+.chess-square.light .chess-file-label,
+.chess-square.light .chess-rank-label {
+  color: #769656;
+}
+
+.chess-square.dark .chess-file-label,
+.chess-square.dark .chess-rank-label {
+  color: #eeeed2;
+}
+
+.chess-svg-overlay {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(100% - 6px);
+  height: calc(100% - 6px);
+  pointer-events: none;
+  z-index: 50; /* Increased from 20 to render above pieces (z-index: 25) */
+  overflow: visible;
+}
+
+/* Arrow styling */
+.chess-svg-overlay line {
+  /* Line styles set inline */
+}
+
+.chess-svg-overlay polygon {
+  /* Arrowhead styles set inline */
+}
+
+.chess-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  margin-bottom: 1rem;
+  /* Add a subtle background to make the control area more visible */
+  background: var(--background-primary);
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+}
+
+.chess-control-btn {
+  background: var(--interactive-accent);
+  border: none;
+  padding: 0.5rem 0.875rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background 0.2s, transform 0.1s;
+  color: var(--text-on-accent);
+  font-weight: 500;
+  /* Make buttons more prominent */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.chess-control-btn:hover:not(:disabled) {
+  background: var(--interactive-accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
+}
+
+.chess-control-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.chess-control-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: var(--interactive-normal);
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.chess-move-counter {
+  font-size: 0.875rem;
+  color: var(--text-normal);
+  min-width: 100px;
+  text-align: center;
+  font-weight: 500;
+  padding: 0.25rem 0.5rem;
+  background: var(--background-secondary);
+  border-radius: 4px;
+}
+
+/* Clock styles */
+.chess-clocks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 1rem;
+  gap: 1rem;
+}
+
+.chess-clock {
+  flex: 1;
+  padding: 0.75rem;
+  background: var(--background-primary);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  transition: border-color 0.2s;
+}
+
+.chess-clock.active {
+  border-color: var(--interactive-accent);
+}
+
+.chess-clock-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.chess-clock-time {
+  font-size: 1.25rem;
+  font-family: var(--font-monospace);
+  font-weight: bold;
+}
+
+.chess-clock-elo {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+/* Game info and sections */
+.chess-fen {
+  background: var(--background-primary);
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  /* Allow shrinking but prefer not to - content can overflow */
+  flex-shrink: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chess-move-list {
+  background: var(--background-primary);
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  /* CRITICAL FIX: Allow shrinking. Use flex-shrink: 0 only to maintain explicit height, 
+     but min-height: 0 allows the container to shrink if grid constraints require it */
+  flex: 0 0 auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* Allow shrinking past content size */
+}
+
+/* Resizer between moves and notes */
+.chess-moves-notes-resizer {
+  height: 6px;
+  background: var(--background-modifier-border);
+  cursor: ns-resize;
+  border-radius: 3px;
+  margin: 0.25rem 0;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.chess-moves-notes-resizer:hover {
+  background: var(--interactive-accent);
+}
+
+.chess-game-info h4,
+.chess-move-list h4,
+.chess-fen h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  /* Headers should not shrink normally, but allow it if absolutely necessary */
+  flex-shrink: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chess-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  /* Allow section headers to shrink */
+  flex-shrink: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chess-section-header h4 {
+  margin: 0;
+}
+
+.chess-copy-fen-btn,
+.chess-notes-toggle-btn {
+  background: var(--interactive-normal);
+  border: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: background 0.2s;
+  color: var(--text-normal);
+}
+
+.chess-copy-fen-btn:hover,
+.chess-notes-toggle-btn:hover {
+  background: var(--interactive-hover);
+}
+
+.chess-info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.chess-info-item strong {
+  color: var(--text-muted);
+}
+
+.chess-info-item a {
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+.chess-info-item a:hover {
+  text-decoration: underline;
+}
+
+/* Move list with 2-column layout */
+.chess-moves {
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  scroll-behavior: smooth;
+  position: relative;
+  /* CRITICAL: Allow this to shrink */
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.chess-move-row {
+  display: grid;
+  grid-template-columns: 2rem 1fr 1fr;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.chess-move-number {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: right;
+  padding-right: 0.25rem;
+}
+
+.chess-move-item {
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+  background: var(--background-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chess-move-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.chess-move-item.active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.chess-move-placeholder {
+  cursor: default;
+  background: transparent;
+}
+
+.chess-move-placeholder:hover {
+  background: transparent;
+}
+
+.chess-move-text {
+  font-family: var(--font-monospace);
+  font-size: 0.875rem;
+}
+
+/* Annotation/notes indicator dot on moves - right aligned */
+.chess-move-indicator {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background-color: var(--interactive-accent);
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.chess-move-item.has-annotation {
+  /* Using flex with justify-content: space-between for right alignment */
+}
+
+.chess-move-item.active .chess-move-indicator {
+  background-color: var(--text-on-accent);
+}
+
+/* Notes section - fills all remaining space below Moves */
+.chess-notes {
+  background: var(--background-primary);
+  padding: 0.5rem;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  /* CRITICAL: flex-basis: 0 means start from nothing and grow to fill space
+     flex-shrink: 1 means it CAN shrink below its content size
+     flex-grow: 1 means it takes all remaining space */
+  flex: 1 1 0 !important;
+  /* CRITICAL: min-height: 0 overrides the default min-height: auto 
+     which would otherwise prevent shrinking below content size */
+  min-height: 0 !important;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.chess-notes h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  /* Allow header to shrink/hide if space is extremely limited */
+  flex-shrink: 1;
+  min-height: 0 !important;
+  overflow: hidden;
+}
+
+.chess-notes-container {
+  /* CRITICAL: All three of these work together for proper shrinking */
+  flex: 1 1 0 !important;  /* Grow and shrink from 0 basis */
+  min-height: 0 !important; /* Override auto min-height */
+  overflow: hidden; /* Prevent content from forcing size */
+  position: relative; /* For absolute positioned editor */
+}
+
+.chess-notes-editor {
+  /* Absolute positioning fills the container regardless of content */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0.5rem;
+  border: none;
+  border-radius: 4px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-family: var(--font-text);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  cursor: text;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Override any Obsidian markdown-preview-view defaults that might set min-height */
+  min-height: 0 !important;
+  height: auto !important;
+  box-sizing: border-box;
+}
+
+.chess-notes-editor:hover {
+  border-color: var(--interactive-hover);
+}
+
+/* Show darker shade when textarea has focus (cursor in box) */
+.chess-notes-editor:has(.chess-notes-input-inline:focus),
+.chess-notes-editor:focus-within {
+  background: var(--background-primary);
+  border-color: var(--interactive-accent);
+}
+
+.chess-notes-input-inline {
+  /* Use absolute positioning to fill container, same as the editor */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  outline: none;
+  white-space: pre-wrap;
+  resize: none;
+  border: 1px solid var(--interactive-accent);
+  border-radius: 4px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  /* Match exact padding of the editor for consistent cursor position */
+  padding: 0.5rem;
+  box-sizing: border-box;
+  font-family: var(--font-text);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  /* Ensure text starts at the same position as rendered markdown */
+  margin: 0;
+}
+
+.chess-notes-input-inline:focus {
+  outline: none;
+}
+
+/* Markdown preview styling */
+.chess-notes-editor h1,
+.chess-notes-editor h2,
+.chess-notes-editor h3,
+.chess-notes-editor h4,
+.chess-notes-editor h5,
+.chess-notes-editor h6 {
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+}
+
+.chess-notes-editor h1 {
+  font-size: 1.5em;
+}
+
+.chess-notes-editor h2 {
+  font-size: 1.3em;
+}
+
+.chess-notes-editor h3 {
+  font-size: 1.1em;
+}
+
+.chess-notes-editor p {
+  margin: 0.5em 0;
+}
+
+/* First paragraph should have no top margin to match textarea cursor position */
+.chess-notes-editor p:first-child,
+.chess-notes-editor > p:first-of-type {
+  margin-top: 0;
+}
+
+.chess-notes-editor ul,
+.chess-notes-editor ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.chess-notes-editor li {
+  margin: 0.25em 0;
+}
+
+.chess-notes-editor code {
+  background: var(--background-secondary);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+}
+
+.chess-notes-editor pre {
+  background: var(--background-secondary);
+  padding: 0.5em;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.chess-notes-editor pre code {
+  background: none;
+  padding: 0;
+}
+
+.chess-notes-editor blockquote {
+  border-left: 3px solid var(--background-modifier-border);
+  margin: 0.5em 0;
+  padding-left: 1em;
+  color: var(--text-muted);
+}
+
+.chess-notes-editor a {
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+.chess-notes-editor a:hover {
+  text-decoration: underline;
+}
+
+.chess-notes-editor strong {
+  font-weight: 600;
+}
+
+.chess-notes-editor em {
+  font-style: italic;
+}
+
+.chess-notes-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Notes display with proper markdown rendering and position tracking */
+.chess-notes-display {
+  font-family: var(--font-text);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.chess-notes-line {
+  display: block;
+  min-height: 1.6em;
+  margin: 0;
+  padding: 0;
+}
+
+.chess-notes-empty-line {
+  min-height: 1.6em;
+}
+
+/* Header styling - proper header appearance */
+.chess-notes-h1 {
+  font-size: 1.5em;
+  font-weight: 600;
+  margin-top: 0.5em;
+  margin-bottom: 0.25em;
+  color: var(--h1-color, var(--text-normal));
+}
+
+.chess-notes-h2 {
+  font-size: 1.3em;
+  font-weight: 600;
+  margin-top: 0.5em;
+  margin-bottom: 0.25em;
+  color: var(--h2-color, var(--text-normal));
+}
+
+.chess-notes-h3 {
+  font-size: 1.15em;
+  font-weight: 600;
+  margin-top: 0.5em;
+  margin-bottom: 0.25em;
+  color: var(--h3-color, var(--text-normal));
+}
+
+.chess-notes-h4,
+.chess-notes-h5,
+.chess-notes-h6 {
+  font-size: 1em;
+  font-weight: 600;
+  margin-top: 0.5em;
+  margin-bottom: 0.25em;
+}
+
+/* List styling */
+.chess-notes-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+  padding-left: 0.25em;
+}
+
+.chess-notes-list-bullet,
+.chess-notes-list-number {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  min-width: 1em;
+}
+
+.chess-notes-list-content {
+  flex: 1;
+}
+
+.chess-notes-ordered .chess-notes-list-number {
+  min-width: 1.5em;
+}
+
+/* Checkbox styling */
+.chess-notes-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+}
+
+.chess-notes-checkbox-box {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.chess-notes-checkbox-box.checked {
+  color: var(--interactive-accent);
+}
+
+/* Blockquote styling */
+.chess-notes-blockquote {
+  border-left: 3px solid var(--background-modifier-border);
+  padding-left: 0.75em;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Inline formatting */
+.chess-notes-bold {
+  font-weight: 600;
+}
+
+.chess-notes-italic {
+  font-style: italic;
+}
+
+.chess-notes-code {
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+  background: var(--background-secondary-alt, var(--background-secondary));
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+}
+
+.chess-notes-strike {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.chess-notes-highlight {
+  background: var(--text-highlight-bg, rgba(255, 255, 0, 0.3));
+  padding: 0.1em 0;
+}
+
+/* Links */
+.chess-notes-link {
+  color: var(--link-color);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.chess-notes-link:hover {
+  text-decoration: underline;
+}
+
+.chess-notes-link.internal-link {
+  color: var(--link-color);
+}
+
+.chess-notes-link.external-link {
+  color: var(--link-external-color, var(--link-color));
+}
+
+.chess-move-start {
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+/* FEN section */
+.chess-fen code {
+  display: block;
+  padding: 0.5rem;
+  background: var(--background-secondary);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  word-break: break-all;
+  font-family: var(--font-monospace);
+}
+
+/* King in check/checkmate highlighting - chess.com style */
+.chess-square.in-check {
+  /* Chess.com uses a red radial gradient emanating from behind the king */
+  background: radial-gradient(ellipse at center, 
+    rgba(255, 0, 0, 1) 0%, 
+    rgba(231, 76, 60, 0.9) 25%, 
+    rgba(192, 57, 43, 0.7) 50%, 
+    rgba(192, 57, 43, 0.3) 75%,
+    transparent 100%) !important;
+  box-shadow: inset 0 0 12px 4px rgba(255, 0, 0, 0.6);
+}
+
+.chess-square.checkmate {
+  /* Darker, more dramatic red for checkmate */
+  background: radial-gradient(ellipse at center, 
+    rgba(139, 0, 0, 1) 0%, 
+    rgba(178, 34, 34, 0.95) 20%, 
+    rgba(139, 0, 0, 0.8) 45%, 
+    rgba(139, 0, 0, 0.4) 70%,
+    transparent 100%) !important;
+  box-shadow: inset 0 0 16px 6px rgba(139, 0, 0, 0.8);
+}
+
+/* Subtle pulse animation for check - not too distracting */
+@keyframes check-pulse {
+  0%, 100% { 
+    box-shadow: inset 0 0 12px 4px rgba(255, 0, 0, 0.6);
+  }
+  50% { 
+    box-shadow: inset 0 0 16px 6px rgba(255, 0, 0, 0.8);
+  }
+}
+
+.chess-square.in-check {
+  animation: check-pulse 1.5s ease-in-out infinite;
+}
+
+/* No animation for checkmate - it's final */
+.chess-square.checkmate {
+  animation: none;
+}
+
+/* Clear annotations button (mobile) */
+.chess-clear-annotations-btn {
+  background: var(--background-modifier-error);
+  border: none;
+  padding: 0.35rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: white;
+  transition: background 0.2s, opacity 0.2s;
+}
+
+.chess-clear-annotations-btn:hover {
+  opacity: 0.9;
+}
+
+.chess-clear-annotations-btn:active {
+  opacity: 0.8;
+}
+
+/* Status indicators */
+.chess-status {
+  padding: 0.75rem;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 1.1rem;
+  margin-top: 0;
+}
+
+.chess-status.check {
+  background-color: #fef3c7;
+  color: #92400e;
+  border: 2px solid #fbbf24;
+}
+
+.chess-status.checkmate {
+  background-color: #fee2e2;
+  color: #991b1b;
+  border: 2px solid #ef4444;
+}
+
+/* Piece animation transition */
+.chess-piece {
+  transition: none; /* Default no transition - animation added via JS */
+}
+
+/* Mobile optimizations */
+@media (max-width: 1023px) {
+  .chess-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      "board"
+      "info"
+      "boardinfo";
+    height: auto;
+    min-height: auto;
+    gap: 1rem;
+  }
+  
+  .chess-board-wrapper {
+    max-width: 600px;
+    margin: 0 auto;
+  }
+  
+  .chess-board-section,
+  .chess-board-info-section,
+  .chess-info-section {
+    width: 100% !important;
+    max-width: none;
+  }
+  
+  .chess-info-section {
+    max-height: none;
+    height: auto !important;
+    overflow: visible;
+    /* Reorder children on mobile: notes first, then FEN, then moves */
+    display: flex;
+    flex-direction: column;
+    /* Reset the min-height from desktop */
+    min-height: auto !important;
+  }
+  
+  /* On mobile, show notes first in info section */
+  .chess-info-section .chess-notes {
+    order: -1;
+  }
+  
+  /* MOBILE FIX: Make notes and moves sections taller for readability */
+  .chess-notes {
+    min-height: 200px !important; /* Doubled from 120px */
+    max-height: 350px; /* Increased max */
+    flex: 0 0 auto !important; /* Don't grow/shrink on mobile - fixed size */
+    overflow: hidden;
+  }
+  
+  /* On mobile, notes-container needs explicit height for absolute child */
+  .chess-notes-container {
+    min-height: 160px !important; /* Doubled from 80px */
+    flex: 1 1 auto !important;
+  }
+  
+  .chess-move-list {
+    height: auto !important;
+    min-height: 200px !important; /* Doubled from 100px */
+    max-height: 400px; /* Increased max */
+    flex: 0 0 auto !important;
+    overflow-y: auto;
+  }
+  
+  /* Ensure the moves list inside is visible */
+  .chess-moves {
+    min-height: 150px !important; /* Increased from 60px */
+    max-height: 350px; /* Increased max */
+  }
+  
+  .chess-fen {
+    flex: 0 0 auto !important;
+    min-height: auto;
+  }
+  
+  /* Game info section on mobile */
+  .chess-board-info-section {
+    min-height: 80px !important;
+    max-height: 300px;
+    height: auto !important;
+    overflow-y: auto;
+  }
+  
+  .chess-game-info {
+    min-height: 60px !important;
+  }
+  
+  /* Mobile: Clocks side by side to conserve space */
+  .chess-clocks {
+    flex-direction: row !important;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  
+  .chess-clock {
+    flex: 1;
+    min-width: 0;
+  }
+  
+  /* Hide resizers on mobile - they don't work well with touch */
+  .chess-moves-notes-resizer,
+  .chess-resizer,
+  .chess-height-resizer {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .chess-plugin-container {
+    padding: 0.5rem;
+  }
+
+  .chess-board-section,
+  .chess-board-info-section,
+  .chess-info-section {
+    padding: 0.75rem;
+  }
+
+  .chess-board-wrapper {
+    width: 100% !important;
+    max-width: 100%;
+  }
+
+  .chess-piece {
+    font-size: clamp(32px, 8vw, 64px);
+  }
+
+  .chess-controls {
+    padding: 0.375rem 0.5rem;
+  }
+
+  .chess-control-btn {
+    padding: 0.375rem 0.625rem;
+    font-size: 0.875rem;
+  }
+
+  .chess-move-counter {
+    font-size: 0.75rem;
+    min-width: 70px;
+    padding: 0.2rem 0.4rem;
+  }
+
+  .chess-file-label,
+  .chess-rank-label {
+    font-size: 9px;
+  }
+  
+  /* Keep clocks side by side even on small screens */
+  .chess-clocks {
+    flex-direction: row !important;
+    gap: 0.5rem;
+  }
+  
+  .chess-clock {
+    padding: 0.5rem;
+  }
+  
+  .chess-clock-name {
+    font-size: 0.75rem;
+  }
+  
+  .chess-clock-time {
+    font-size: 1rem;
+  }
+  
+  .chess-clock-elo {
+    font-size: 0.65rem;
+  }
+  
+  .chess-move-row {
+    grid-template-columns: 1.5rem 1fr 1fr;
+    gap: 0.25rem;
+  }
+  
+  .chess-move-number {
+    font-size: 0.7rem;
+  }
+  
+  .chess-move-text {
+    font-size: 0.8rem;
+  }
+}
+
+/* Evaluation Bar Styles */
+.chess-board-content {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.chess-eval-bar-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.chess-eval-bar {
+  width: 12px;
+  flex-grow: 1;
+  background: #1a1a1a;
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.chess-eval-bar-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: #f0f0f0;
+  transition: height 0.3s ease-out;
+}
+
+.chess-eval-text {
+  font-size: 0.55rem;
+  font-weight: bold;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Engine arrow styling */
+.chess-engine-arrow line {
+  opacity: 0.85;
+}
+
+/* Mobile adjustments for eval bar */
+@media (max-width: 640px) {
+  .chess-eval-bar-container {
+    width: 12px;
+  }
+  
+  .chess-eval-bar {
+    width: 10px;
+  }
+  
+  .chess-eval-text {
+    font-size: 0.5rem;
+  }
+}
