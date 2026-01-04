@@ -683,7 +683,8 @@ export default class ChessPlugin extends Plugin {
       const evalText = currentContainer.querySelector('.chess-eval-text');
 
       if (!evalBar || !evalText) return;
-      
+      if (!(evalBar instanceof HTMLElement)) return;
+
       const engineEval = getEngineEval();
       if (engineEval === null) {
         evalBar.setCssStyles({ height: '50%' });
@@ -938,11 +939,18 @@ export default class ChessPlugin extends Plugin {
         this.registerDocumentListener(boardId, 'mouseup', heightResizeUpHandler as EventListener);
       } else {
         // Subsequent renders - reuse structure
+        if (!(existingLayout instanceof HTMLElement)) return;
         layout = existingLayout;
         boardSection = layout.querySelector('.chess-board-section');
         gameInfoSection = layout.querySelector('.chess-board-info-section');
         infoSection = layout.querySelector('.chess-info-section');
         heightResizer = container.querySelector('.chess-height-resizer');
+
+        if (!(boardSection instanceof HTMLElement) ||
+            !(gameInfoSection instanceof HTMLElement) ||
+            !(infoSection instanceof HTMLElement)) {
+          return;
+        }
 
         // Try to preserve board elements - now inside boardContent
         boardContent = boardSection.querySelector('.chess-board-content');
@@ -977,7 +985,7 @@ export default class ChessPlugin extends Plugin {
       
       const title = document.createElement('h3');
       title.className = 'chess-title';
-      title.textContent = 'Chess Plugin';
+      title.textContent = 'Chess plugin';
       header.appendChild(title);
       
       const controls = document.createElement('div');
@@ -1187,8 +1195,8 @@ export default class ChessPlugin extends Plugin {
 
             // Find the active move element
             const activeMove = newMoveList.querySelector('.chess-move-item.active');
-            
-            if (activeMove) {
+
+            if (activeMove instanceof HTMLElement) {
               const activeTop = activeMove.offsetTop;
               const activeHeight = activeMove.offsetHeight;
               const listHeight = newMoveList.clientHeight;
@@ -1801,7 +1809,7 @@ export default class ChessPlugin extends Plugin {
           const whiteEloEl = whiteClockDiv.querySelector('.chess-clock-elo');
           if (whiteName_el) whiteName_el.textContent = whiteName || 'White';
           if (whiteTime_el) whiteTime_el.textContent = this.formatTime(whiteTime);
-          if (whiteEloEl) {
+          if (whiteEloEl instanceof HTMLElement) {
             whiteEloEl.textContent = whiteElo ? `(${whiteElo})` : '';
             whiteEloEl.setCssStyles({ display: whiteElo ? 'block' : 'none' });
           }
@@ -1815,7 +1823,7 @@ export default class ChessPlugin extends Plugin {
           const blackEloEl = blackClockDiv.querySelector('.chess-clock-elo');
           if (blackName_el) blackName_el.textContent = blackName || 'Black';
           if (blackTime_el) blackTime_el.textContent = this.formatTime(blackTime);
-          if (blackEloEl) {
+          if (blackEloEl instanceof HTMLElement) {
             blackEloEl.textContent = blackElo ? `(${blackElo})` : '';
             blackEloEl.setCssStyles({ display: blackElo ? 'block' : 'none' });
           }
@@ -2921,7 +2929,7 @@ export default class ChessPlugin extends Plugin {
         requestAnimationFrame(() => {
           const bSection = container.querySelector('.chess-board-section');
           const bWrapper = container.querySelector('.chess-board-wrapper');
-          if (bSection && bWrapper) {
+          if (bSection instanceof HTMLElement && bWrapper instanceof HTMLElement) {
             const evalW = this.settings.enableEngine ? 20 : 0;
             const padW = 32;
             const secW = bSection.offsetWidth;
@@ -3058,21 +3066,25 @@ export default class ChessPlugin extends Plugin {
     const squareSize = fromSquare.getBoundingClientRect().width;
     const deltaX = (displayToCol - displayFromCol) * squareSize;
     const deltaY = (displayToRow - displayFromRow) * squareSize;
-    
+
+    if (!(pieceEl instanceof HTMLElement)) return;
+
     // Apply animation
     pieceEl.setCssStyles({
       transition: `transform ${duration}ms ease-out`,
       transform: `translate(${deltaX}px, ${deltaY}px)`
     });
     pieceEl.setCssStyles({ zIndex: '100' });
-    
+
     setTimeout(() => {
       // Reset styles before callback
-      pieceEl.setCssStyles({
-        transition: '',
-        transform: '',
-        zIndex: ''
-      });
+      if (pieceEl instanceof HTMLElement) {
+        pieceEl.setCssStyles({
+          transition: '',
+          transform: '',
+          zIndex: ''
+        });
+      }
       onComplete();
     }, duration);
   }
@@ -3388,7 +3400,7 @@ export default class ChessPlugin extends Plugin {
                   const targetElement = document.elementFromPoint(e.clientX, e.clientY);
                   if (targetElement) {
                     const square = targetElement.closest('.chess-square');
-                    if (square && square.dataset.row && square.dataset.col) {
+                    if (square instanceof HTMLElement && square.dataset.row && square.dataset.col) {
                       const targetRow = parseInt(square.dataset.row);
                       const targetCol = parseInt(square.dataset.col);
                       onDragEnd(targetRow, targetCol);
@@ -3419,7 +3431,7 @@ export default class ChessPlugin extends Plugin {
                 // DON'T start drag here - wait for movement
               }
             });
-          } else if (existingPiece) {
+          } else if (existingPiece instanceof HTMLElement) {
             // Piece exists and type matches - just update data attributes
             existingPiece.dataset.row = actualRow.toString();
             existingPiece.dataset.col = actualCol.toString();
@@ -4735,7 +4747,7 @@ export default class ChessPlugin extends Plugin {
       }
     }
     
-    let data = this.boardDataCache.get(boardId);
+    let data: BoardFileData | undefined = this.boardDataCache.get(boardId);
     if (!data) {
       data = {};
       this.boardDataCache.set(boardId, data);
