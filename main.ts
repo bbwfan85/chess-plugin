@@ -1033,7 +1033,7 @@ export default class ChessPlugin extends Plugin {
       const resetBtn = document.createElement('button');
       resetBtn.className = 'chess-reset-btn';
       resetBtn.textContent = '⟲';
-      resetBtn.title = 'Clear custom moves (return to current PGN/FEN position)';
+      resetBtn.title = 'Clear custom moves (Return to current PGN/FEN position)';
       resetBtn.onclick = () => {
         saveAnnotationsToMemory(); // Save current annotations to memory before reset
         
@@ -3518,12 +3518,12 @@ export default class ChessPlugin extends Plugin {
       const backRank = isWhite ? 7 : 0;
       if (row === backRank && col === 4) {
         // Kingside castling
-        if (board[backRank][7] && board[backRank][7]!.toLowerCase() === 'r' &&
+        if (board[backRank][7] && board[backRank][7].toLowerCase() === 'r' &&
             board[backRank][5] === null && board[backRank][6] === null) {
           moves.push([backRank, 6]);
         }
         // Queenside castling
-        if (board[backRank][0] && board[backRank][0]!.toLowerCase() === 'r' &&
+        if (board[backRank][0] && board[backRank][0].toLowerCase() === 'r' &&
             board[backRank][1] === null && board[backRank][2] === null && board[backRank][3] === null) {
           moves.push([backRank, 2]);
         }
@@ -4404,15 +4404,15 @@ export default class ChessPlugin extends Plugin {
         console.error(`Chess plugin: [SAVE FAILED] Could not find file: ${filePath}`);
         return await this.saveBoardDataToFile(boardId);
       }
-      
-      // Verify it's a file not a folder (TFile has 'basename', TFolder doesn't)
-      if (!('basename' in file)) {
+
+      // Verify it's a file not a folder
+      if (!(file instanceof TFile)) {
         console.error(`Chess plugin: [SAVE FAILED] Path is a folder, not a file: ${filePath}`);
         return await this.saveBoardDataToFile(boardId);
       }
-      
+
       // Read current file content
-      const content = await this.app.vault.read(file as TFile);
+      const content = await this.app.vault.read(file);
       
       // Prepare data delimiter
       const dataDelimiter = '<!--chess-data-->';
@@ -4509,7 +4509,7 @@ export default class ChessPlugin extends Plugin {
       if (foundMatch) {
         if (newContent !== content) {
           // Actually write the changes
-          await this.app.vault.modify(file as TFile, newContent);
+          await this.app.vault.modify(file, newContent);
         }
         // Success - don't fall back to file save
         return;
