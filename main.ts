@@ -1033,7 +1033,7 @@ export default class ChessPlugin extends Plugin {
       const resetBtn = document.createElement('button');
       resetBtn.className = 'chess-reset-btn';
       resetBtn.textContent = '⟲';
-      resetBtn.title = 'Clear custom moves (Return to current PGN/FEN position)';
+      resetBtn.title = 'Clear custom moves (return to current PGN/FEN position)';
       resetBtn.onclick = () => {
         saveAnnotationsToMemory(); // Save current annotations to memory before reset
         
