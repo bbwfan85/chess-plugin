@@ -126,13 +126,13 @@ export default class ChessPlugin extends Plugin {
     for (const [boardId, timeout] of this.saveTimeouts) {
       clearTimeout(timeout);
       // Note: Cannot await in onunload (must return void), save happens synchronously
-      this.saveBoardData(boardId);
+      void this.saveBoardData(boardId);
     }
     this.saveTimeouts.clear();
     this.boardContextCache.clear();
 
     // Remove all document event listeners
-    for (const [boardId, listeners] of this.documentListeners) {
+    for (const [, listeners] of this.documentListeners) {
       for (const { type, handler } of listeners) {
         document.removeEventListener(type, handler);
       }
@@ -140,7 +140,7 @@ export default class ChessPlugin extends Plugin {
     this.documentListeners.clear();
 
     // Terminate all engine workers
-    for (const [boardId, engineState] of this.engineCache) {
+    for (const [, engineState] of this.engineCache) {
       if (engineState.worker) {
         engineState.worker.postMessage('stop');
         engineState.worker.postMessage('quit');
@@ -159,7 +159,10 @@ export default class ChessPlugin extends Plugin {
     if (!this.documentListeners.has(boardId)) {
       this.documentListeners.set(boardId, []);
     }
-    this.documentListeners.get(boardId)!.push({ type, handler });
+    const listeners = this.documentListeners.get(boardId);
+    if (listeners) {
+      listeners.push({ type, handler });
+    }
     document.addEventListener(type, handler);
   }
   
@@ -284,7 +287,7 @@ export default class ChessPlugin extends Plugin {
     blackElo: string,
     whiteName: string,
     blackName: string,
-    adapter: any,
+    adapter: DataAdapter,
     pluginPath: string,
     boardData: BoardFileData,
     ctx: MarkdownPostProcessorContext,
@@ -409,20 +412,20 @@ export default class ChessPlugin extends Plugin {
     }
     
     // Local references to cached engine state (for easier access)
-    const getEngineWorker = () => cachedEngine!.worker;
-    const setEngineWorker = (w: Worker | null) => { cachedEngine!.worker = w; };
-    const getEngineEval = () => cachedEngine!.eval;
-    const setEngineEval = (e: number | null) => { cachedEngine!.eval = e; };
-    const getEngineBestMove = () => cachedEngine!.bestMove;
-    const setEngineBestMove = (m: { from: [number, number], to: [number, number] } | null) => { cachedEngine!.bestMove = m; };
-    const getEngineDepth = () => cachedEngine!.depth;
-    const setEngineDepth = (d: number) => { cachedEngine!.depth = d; };
-    const setEngineLoading = (l: boolean) => { cachedEngine!.loading = l; };
-    const setEngineError = (e: string | null) => { cachedEngine!.error = e; };
-    const getCurrentAnalysisFen = () => cachedEngine!.currentFen;
-    const setCurrentAnalysisFen = (f: string) => { cachedEngine!.currentFen = f; };
-    const getAnalysisTurn = () => cachedEngine!.analysisTurn;
-    const setAnalysisTurn = (t: 'w' | 'b') => { cachedEngine!.analysisTurn = t; };
+    const getEngineWorker = () => cachedEngine.worker;
+    const setEngineWorker = (w: Worker | null) => { cachedEngine.worker = w; };
+    const getEngineEval = () => cachedEngine.eval;
+    const setEngineEval = (e: number | null) => { cachedEngine.eval = e; };
+    const getEngineBestMove = () => cachedEngine.bestMove;
+    const setEngineBestMove = (m: { from: [number, number], to: [number, number] } | null) => { cachedEngine.bestMove = m; };
+    const getEngineDepth = () => cachedEngine.depth;
+    const setEngineDepth = (d: number) => { cachedEngine.depth = d; };
+    const setEngineLoading = (l: boolean) => { cachedEngine.loading = l; };
+    const setEngineError = (e: string | null) => { cachedEngine.error = e; };
+    const getCurrentAnalysisFen = () => cachedEngine.currentFen;
+    const setCurrentAnalysisFen = (f: string) => { cachedEngine.currentFen = f; };
+    const getAnalysisTurn = () => cachedEngine.analysisTurn;
+    const setAnalysisTurn = (t: 'w' | 'b') => { cachedEngine.analysisTurn = t; };
 
     // Clock state for timed games
     let whiteTime = timestamps.length > 0 ? this.parseClockTime(timestamps[0]?.white || '0:10:00') : 0;
@@ -519,7 +522,7 @@ export default class ChessPlugin extends Plugin {
           `;
           const blob = new Blob([workerCode], { type: 'application/javascript' });
           worker = new Worker(URL.createObjectURL(blob));
-        } catch (e) {
+        } catch {
           // If CDN doesn't work, try creating worker differently
           worker = new Worker('https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js');
         }
@@ -673,11 +676,11 @@ export default class ChessPlugin extends Plugin {
 
     const updateEvalBar = () => {
       // Find the current container by boardId (not the captured reference which may be stale)
-      const currentContainer = document.querySelector(`[data-board-id="${boardId}"]`) as HTMLElement;
+      const currentContainer = document.querySelector(`[data-board-id="${boardId}"]`);
       if (!currentContainer) return;
 
-      const evalBar = currentContainer.querySelector('.chess-eval-bar-fill') as HTMLElement;
-      const evalText = currentContainer.querySelector('.chess-eval-text') as HTMLElement;
+      const evalBar = currentContainer.querySelector('.chess-eval-bar-fill');
+      const evalText = currentContainer.querySelector('.chess-eval-text');
 
       if (!evalBar || !evalText) return;
       
@@ -712,10 +715,10 @@ export default class ChessPlugin extends Plugin {
 
     const updateBestMoveArrow = () => {
       // Find the current container by boardId (not the captured reference which may be stale)
-      const currentContainer = document.querySelector(`[data-board-id="${boardId}"]`) as HTMLElement;
+      const currentContainer = document.querySelector(`[data-board-id="${boardId}"]`);
       if (!currentContainer) return;
-      
-      const svgOverlay = currentContainer.querySelector('.chess-svg-overlay') as SVGSVGElement;
+
+      const svgOverlay = currentContainer.querySelector('.chess-svg-overlay');
       if (!svgOverlay) return;
       
       // Remove existing engine arrow
@@ -935,14 +938,14 @@ export default class ChessPlugin extends Plugin {
         this.registerDocumentListener(boardId, 'mouseup', heightResizeUpHandler as EventListener);
       } else {
         // Subsequent renders - reuse structure
-        layout = existingLayout as HTMLElement;
-        boardSection = layout.querySelector('.chess-board-section') as HTMLElement;
-        gameInfoSection = layout.querySelector('.chess-board-info-section') as HTMLElement;
-        infoSection = layout.querySelector('.chess-info-section') as HTMLElement;
+        layout = existingLayout;
+        boardSection = layout.querySelector('.chess-board-section');
+        gameInfoSection = layout.querySelector('.chess-board-info-section');
+        infoSection = layout.querySelector('.chess-info-section');
         heightResizer = container.querySelector('.chess-height-resizer');
-        
+
         // Try to preserve board elements - now inside boardContent
-        boardContent = boardSection.querySelector('.chess-board-content') as HTMLElement;
+        boardContent = boardSection.querySelector('.chess-board-content');
         if (boardContent) {
           boardWrapper = boardContent.querySelector('.chess-board-wrapper');
           if (boardWrapper) {
@@ -1163,27 +1166,27 @@ export default class ChessPlugin extends Plugin {
         loadAnnotations();
         
         // CRITICAL: Get scroll position BEFORE render destroys the DOM
-        const moveListEl = container.querySelector('.chess-moves') as HTMLElement;
+        const moveListEl = container.querySelector('.chess-moves');
         const scrollPosBefore = moveListEl ? moveListEl.scrollTop : 0;
-        
+
         render();
-        
+
         // Trigger engine analysis for new position
         if (this.settings.enableEngine) {
           analyzePosition();
         }
-        
+
         // CRITICAL: Handle scroll AFTER render using requestAnimationFrame to avoid layout thrashing
         // Use preventScroll techniques to ensure we don't affect the main Obsidian scroll
         requestAnimationFrame(() => {
-          const newMoveList = container.querySelector('.chess-moves') as HTMLElement;
+          const newMoveList = container.querySelector('.chess-moves');
           if (newMoveList) {
             // Temporarily prevent scroll events from bubbling
             const preventParentScroll = (e: Event) => e.stopPropagation();
             newMoveList.addEventListener('scroll', preventParentScroll, { capture: true });
-            
+
             // Find the active move element
-            const activeMove = newMoveList.querySelector('.chess-move-item.active') as HTMLElement;
+            const activeMove = newMoveList.querySelector('.chess-move-item.active');
             
             if (activeMove) {
               const activeTop = activeMove.offsetTop;
@@ -1269,7 +1272,7 @@ export default class ChessPlugin extends Plugin {
 
       // Create or reuse board content container (holds eval bar + board)
       if (!boardContent) {
-        boardContent = boardSection.querySelector('.chess-board-content') as HTMLElement;
+        boardContent = boardSection.querySelector('.chess-board-content');
       }
       if (!boardContent) {
         boardContent = document.createElement('div');
@@ -1278,7 +1281,7 @@ export default class ChessPlugin extends Plugin {
       }
 
       // Create eval bar container if engine is enabled
-      let evalBarContainer = boardContent.querySelector('.chess-eval-bar-container') as HTMLElement;
+      let evalBarContainer = boardContent.querySelector('.chess-eval-bar-container');
       if (this.settings.enableEngine && !evalBarContainer) {
         evalBarContainer = document.createElement('div');
         evalBarContainer.className = 'chess-eval-bar-container';
@@ -1292,7 +1295,7 @@ export default class ChessPlugin extends Plugin {
         evalText.className = 'chess-eval-text';
         evalText.textContent = '...';
         evalBarContainer.appendChild(evalText);
-        
+
         // Insert at beginning of board content
         boardContent.insertBefore(evalBarContainer, boardContent.firstChild);
       } else if (!this.settings.enableEngine && evalBarContainer) {
@@ -1301,7 +1304,7 @@ export default class ChessPlugin extends Plugin {
 
       // Board wrapper - create only if it doesn't exist
       if (!boardWrapper) {
-        boardWrapper = boardContent.querySelector('.chess-board-wrapper') as HTMLElement;
+        boardWrapper = boardContent.querySelector('.chess-board-wrapper');
       }
       if (!boardWrapper) {
         boardWrapper = document.createElement('div');
@@ -1761,27 +1764,27 @@ export default class ChessPlugin extends Plugin {
       // Display player clocks only if timestamps exist (which now only happens when PGN has clock data)
       if (timestamps.length > 0) {
         // Check if clocks already exist, if so update them
-        let clocksDiv = boardSection.querySelector('.chess-clocks') as HTMLElement;
-        
+        let clocksDiv = boardSection.querySelector('.chess-clocks');
+
         if (!clocksDiv) {
           // First render - create the clocks structure
           clocksDiv = boardSection.createDiv({ cls: 'chess-clocks' });
-          
+
           const whiteClockDiv = clocksDiv.createDiv({ cls: 'chess-clock chess-clock-white' });
           whiteClockDiv.createEl('div', { cls: 'chess-clock-name' });
           whiteClockDiv.createEl('div', { cls: 'chess-clock-time' });
           whiteClockDiv.createEl('div', { cls: 'chess-clock-elo' });
-          
+
           const blackClockDiv = clocksDiv.createDiv({ cls: 'chess-clock chess-clock-black' });
           blackClockDiv.createEl('div', { cls: 'chess-clock-name' });
           blackClockDiv.createEl('div', { cls: 'chess-clock-time' });
           blackClockDiv.createEl('div', { cls: 'chess-clock-elo' });
         }
-        
+
         // Update clock values
-        const whiteClockDiv = clocksDiv.querySelector('.chess-clock-white') as HTMLElement;
-        const blackClockDiv = clocksDiv.querySelector('.chess-clock-black') as HTMLElement;
-        
+        const whiteClockDiv = clocksDiv.querySelector('.chess-clock-white');
+        const blackClockDiv = clocksDiv.querySelector('.chess-clock-black');
+
         // Update white clock
         // At move -1 (start), it's white's turn (white is active)
         // At move 0 (after white's first move), it's black's turn (black is active)
@@ -1790,21 +1793,33 @@ export default class ChessPlugin extends Plugin {
         // black is active when currentMove is 0, 2, 4, 6... (even and >= 0)
         const isWhiteTurn = currentMove === -1 || currentMove % 2 === 1;
         const isBlackTurn = currentMove >= 0 && currentMove % 2 === 0;
-        
-        whiteClockDiv.className = `chess-clock chess-clock-white${isWhiteTurn ? ' active' : ''}`;
-        (whiteClockDiv.querySelector('.chess-clock-name') as HTMLElement).textContent = whiteName || 'White';
-        (whiteClockDiv.querySelector('.chess-clock-time') as HTMLElement).textContent = this.formatTime(whiteTime);
-        const whiteEloEl = whiteClockDiv.querySelector('.chess-clock-elo') as HTMLElement;
-        whiteEloEl.textContent = whiteElo ? `(${whiteElo})` : '';
-        whiteEloEl.setCssStyles({ display: whiteElo ? 'block' : 'none' });
-        
+
+        if (whiteClockDiv) {
+          whiteClockDiv.className = `chess-clock chess-clock-white${isWhiteTurn ? ' active' : ''}`;
+          const whiteName_el = whiteClockDiv.querySelector('.chess-clock-name');
+          const whiteTime_el = whiteClockDiv.querySelector('.chess-clock-time');
+          const whiteEloEl = whiteClockDiv.querySelector('.chess-clock-elo');
+          if (whiteName_el) whiteName_el.textContent = whiteName || 'White';
+          if (whiteTime_el) whiteTime_el.textContent = this.formatTime(whiteTime);
+          if (whiteEloEl) {
+            whiteEloEl.textContent = whiteElo ? `(${whiteElo})` : '';
+            whiteEloEl.setCssStyles({ display: whiteElo ? 'block' : 'none' });
+          }
+        }
+
         // Update black clock
-        blackClockDiv.className = `chess-clock chess-clock-black${isBlackTurn ? ' active' : ''}`;
-        (blackClockDiv.querySelector('.chess-clock-name') as HTMLElement).textContent = blackName || 'Black';
-        (blackClockDiv.querySelector('.chess-clock-time') as HTMLElement).textContent = this.formatTime(blackTime);
-        const blackEloEl = blackClockDiv.querySelector('.chess-clock-elo') as HTMLElement;
-        blackEloEl.textContent = blackElo ? `(${blackElo})` : '';
-        blackEloEl.setCssStyles({ display: blackElo ? 'block' : 'none' });
+        if (blackClockDiv) {
+          blackClockDiv.className = `chess-clock chess-clock-black${isBlackTurn ? ' active' : ''}`;
+          const blackName_el = blackClockDiv.querySelector('.chess-clock-name');
+          const blackTime_el = blackClockDiv.querySelector('.chess-clock-time');
+          const blackEloEl = blackClockDiv.querySelector('.chess-clock-elo');
+          if (blackName_el) blackName_el.textContent = blackName || 'Black';
+          if (blackTime_el) blackTime_el.textContent = this.formatTime(blackTime);
+          if (blackEloEl) {
+            blackEloEl.textContent = blackElo ? `(${blackElo})` : '';
+            blackEloEl.setCssStyles({ display: blackElo ? 'block' : 'none' });
+          }
+        }
       }
 
       // Current FEN section - NOW IN INFO SECTION (swapped with Game Info)
@@ -2060,7 +2075,7 @@ export default class ChessPlugin extends Plugin {
             linkEl.addEventListener('click', (e) => {
               e.preventDefault();
               e.stopPropagation();
-              this.app.workspace.openLinkText(target, sourcePath, false);
+              void this.app.workspace.openLinkText(target, sourcePath, false);
             });
             
             i += fullMatch.length;
@@ -2904,8 +2919,8 @@ export default class ChessPlugin extends Plugin {
     if (window.innerWidth < 1024) {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          const bSection = container.querySelector('.chess-board-section') as HTMLElement;
-          const bWrapper = container.querySelector('.chess-board-wrapper') as HTMLElement;
+          const bSection = container.querySelector('.chess-board-section');
+          const bWrapper = container.querySelector('.chess-board-wrapper');
           if (bSection && bWrapper) {
             const evalW = this.settings.enableEngine ? 20 : 0;
             const padW = 32;
@@ -3031,8 +3046,8 @@ export default class ChessPlugin extends Plugin {
     const displayToCol = flipped ? 7 - toCol : toCol;
     
     const fromSquareIdx = displayFromRow * 8 + displayFromCol;
-    const fromSquare = boardEl.children[fromSquareIdx] as HTMLElement;
-    const pieceEl = fromSquare?.querySelector('.chess-piece') as HTMLElement;
+    const fromSquare = boardEl.children[fromSquareIdx];
+    const pieceEl = fromSquare?.querySelector('.chess-piece');
     
     if (!pieceEl || !fromSquare) {
       onComplete();
@@ -3372,7 +3387,7 @@ export default class ChessPlugin extends Plugin {
                   // This was a drag - find the target square
                   const targetElement = document.elementFromPoint(e.clientX, e.clientY);
                   if (targetElement) {
-                    const square = targetElement.closest('.chess-square') as HTMLElement;
+                    const square = targetElement.closest('.chess-square');
                     if (square && square.dataset.row && square.dataset.col) {
                       const targetRow = parseInt(square.dataset.row);
                       const targetCol = parseInt(square.dataset.col);
@@ -3387,7 +3402,7 @@ export default class ChessPlugin extends Plugin {
                 isDragging = false;
               }
             };
-            
+
             pieceEl.addEventListener('mousedown', (e) => {
               if (e.button === 0) {
                 e.preventDefault();
@@ -3396,18 +3411,18 @@ export default class ChessPlugin extends Plugin {
                 isDragging = false;
                 startX = e.clientX;
                 startY = e.clientY;
-                
+
                 // Add document-level listeners for tracking
                 document.addEventListener('mousemove', handleMouseMove);
                 document.addEventListener('mouseup', handleMouseUp);
-                
+
                 // DON'T start drag here - wait for movement
               }
             });
           } else if (existingPiece) {
             // Piece exists and type matches - just update data attributes
-            (existingPiece as HTMLElement).dataset.row = actualRow.toString();
-            (existingPiece as HTMLElement).dataset.col = actualCol.toString();
+            existingPiece.dataset.row = actualRow.toString();
+            existingPiece.dataset.col = actualCol.toString();
           }
         }
 
@@ -3573,13 +3588,13 @@ export default class ChessPlugin extends Plugin {
     }
     
     if (!kingPos) return false;
-    
+
     for (let r = 0; r < 8; r++) {
       for (let c = 0; c < 8; c++) {
         const piece = board[r][c];
         if (piece && this.isOpponentPiece(piece, color === 'white')) {
           const moves = this.getLegalMoves(board, r, c);
-          if (moves.some(([mr, mc]) => mr === kingPos![0] && mc === kingPos![1])) {
+          if (moves.some(([mr, mc]) => mr === kingPos[0] && mc === kingPos[1])) {
             return true;
           }
         }
@@ -3709,7 +3724,7 @@ export default class ChessPlugin extends Plugin {
     
     // Extract clock times first (before removing annotations)
     const clockTimes: string[] = [];
-    const clkMatches = [...moveText.matchAll(/\[%clk\s+([\d:\.]+)\]/g)];
+    const clkMatches = [...moveText.matchAll(/\[%clk\s+([\d:.]+)\]/g)];
     clkMatches.forEach(match => clockTimes.push(match[1]));
     
     // Track if we actually found clock data in the PGN
@@ -4302,8 +4317,9 @@ export default class ChessPlugin extends Plugin {
   // Load board data from individual file
   async loadBoardData(boardId: string): Promise<BoardFileData> {
     // Check cache first
-    if (this.boardDataCache.has(boardId)) {
-      return this.boardDataCache.get(boardId)!;
+    const cached = this.boardDataCache.get(boardId);
+    if (cached !== undefined) {
+      return cached;
     }
     
     const filePath = this.getBoardFilePath(boardId);
@@ -4530,78 +4546,80 @@ export default class ChessPlugin extends Plugin {
     }
     
     // Set new timeout - 100ms to batch nearly-simultaneous changes without noticeable delay
-    const timeout = setTimeout(async () => {
-      // Find all scroll containers and save their positions JUST before save
-      const scrollContainers = document.querySelectorAll('.markdown-preview-view, .markdown-source-view, .cm-scroller');
-      const savedScrollPositions: { el: Element, top: number }[] = [];
-      scrollContainers.forEach(el => {
-        savedScrollPositions.push({ el, top: el.scrollTop });
-      });
-      
-      // Save move list scroll positions to the persistent cache
-      // This allows the scroll position to survive re-renders
-      const boardContainer = document.querySelector(`[data-board-id="${boardId}"]`);
-      if (boardContainer) {
-        const moveList = boardContainer.querySelector('.chess-moves');
-        if (moveList) {
-          this.moveListScrollCache.set(boardId, moveList.scrollTop);
-        }
-      }
-      
-      // Also save move list scroll positions for all chess boards (legacy approach for immediate restore)
-      const moveListContainers = document.querySelectorAll('.chess-moves');
-      const savedMoveListScrolls: { el: Element, top: number }[] = [];
-      moveListContainers.forEach(el => {
-        savedMoveListScrolls.push({ el, top: el.scrollTop });
-      });
-      
-      // Set suppressBlur flag to prevent textarea blur from triggering during save
-      // This prevents the edit mode from closing when the save causes DOM changes
-      this.suppressBlur.set(boardId, true);
-      
-      await this.saveBoardData(boardId);
-      this.saveTimeouts.delete(boardId);
-      
-      // Clear suppressBlur after a short delay to allow DOM to settle
-      setTimeout(() => {
-        this.suppressBlur.delete(boardId);
-      }, 100);
-      
-      // Restore scroll positions after save - use multiple attempts
-      // to handle any re-renders that might happen
-      const restoreScrolls = () => {
-        savedScrollPositions.forEach(({ el, top }) => {
-          if (el.isConnected) {
-            el.scrollTop = top;
-          }
+    const timeout = setTimeout(() => {
+      void (async () => {
+        // Find all scroll containers and save their positions JUST before save
+        const scrollContainers = document.querySelectorAll('.markdown-preview-view, .markdown-source-view, .cm-scroller');
+        const savedScrollPositions: { el: Element, top: number }[] = [];
+        scrollContainers.forEach(el => {
+          savedScrollPositions.push({ el, top: el.scrollTop });
         });
-        savedMoveListScrolls.forEach(({ el, top }) => {
-          if (el.isConnected) {
-            el.scrollTop = top;
-          }
-        });
-        
-        // Also restore from cache for newly created elements
-        const newBoardContainer = document.querySelector(`[data-board-id="${boardId}"]`);
-        if (newBoardContainer) {
-          const newMoveList = newBoardContainer.querySelector('.chess-moves');
-          const cachedScroll = this.moveListScrollCache.get(boardId);
-          if (newMoveList && cachedScroll !== undefined) {
-            newMoveList.scrollTop = cachedScroll;
+
+        // Save move list scroll positions to the persistent cache
+        // This allows the scroll position to survive re-renders
+        const boardContainer = document.querySelector(`[data-board-id="${boardId}"]`);
+        if (boardContainer) {
+          const moveList = boardContainer.querySelector('.chess-moves');
+          if (moveList) {
+            this.moveListScrollCache.set(boardId, moveList.scrollTop);
           }
         }
-      };
-      
-      // Restore immediately
-      restoreScrolls();
-      
-      // And after potential re-renders
-      requestAnimationFrame(() => {
+
+        // Also save move list scroll positions for all chess boards (legacy approach for immediate restore)
+        const moveListContainers = document.querySelectorAll('.chess-moves');
+        const savedMoveListScrolls: { el: Element, top: number }[] = [];
+        moveListContainers.forEach(el => {
+          savedMoveListScrolls.push({ el, top: el.scrollTop });
+        });
+
+        // Set suppressBlur flag to prevent textarea blur from triggering during save
+        // This prevents the edit mode from closing when the save causes DOM changes
+        this.suppressBlur.set(boardId, true);
+
+        await this.saveBoardData(boardId);
+        this.saveTimeouts.delete(boardId);
+
+        // Clear suppressBlur after a short delay to allow DOM to settle
+        setTimeout(() => {
+          this.suppressBlur.delete(boardId);
+        }, 100);
+
+        // Restore scroll positions after save - use multiple attempts
+        // to handle any re-renders that might happen
+        const restoreScrolls = () => {
+          savedScrollPositions.forEach(({ el, top }) => {
+            if (el.isConnected) {
+              el.scrollTop = top;
+            }
+          });
+          savedMoveListScrolls.forEach(({ el, top }) => {
+            if (el.isConnected) {
+              el.scrollTop = top;
+            }
+          });
+
+          // Also restore from cache for newly created elements
+          const newBoardContainer = document.querySelector(`[data-board-id="${boardId}"]`);
+          if (newBoardContainer) {
+            const newMoveList = newBoardContainer.querySelector('.chess-moves');
+            const cachedScroll = this.moveListScrollCache.get(boardId);
+            if (newMoveList && cachedScroll !== undefined) {
+              newMoveList.scrollTop = cachedScroll;
+            }
+          }
+        };
+
+        // Restore immediately
         restoreScrolls();
-        setTimeout(restoreScrolls, 50);
-        setTimeout(restoreScrolls, 150);
-        setTimeout(restoreScrolls, 300);
-      });
+
+        // And after potential re-renders
+        requestAnimationFrame(() => {
+          restoreScrolls();
+          setTimeout(restoreScrolls, 50);
+          setTimeout(restoreScrolls, 150);
+          setTimeout(restoreScrolls, 300);
+        });
+      })();
     }, 100); // Save after 100ms - just enough to batch simultaneous changes
     
     this.saveTimeouts.set(boardId, timeout);
