@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, MarkdownPostProcessorContext, MarkdownRenderer, TFolder } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, MarkdownPostProcessorContext, DataAdapter } from 'obsidian';
 
 interface ChessPluginSettings {
   defaultFlipped: boolean;
@@ -37,12 +37,6 @@ interface LegacyChessBoardData {
   annotations: { [boardId: string]: { [moveIndex: number]: { arrows: { from: [number, number], to: [number, number] }[], highlights: string[] } } };
   notes: { [boardId: string]: { [moveIndex: number]: string } };
 }
-
-interface ChessPluginData {
-  settings: ChessPluginSettings;
-  boardData?: LegacyChessBoardData; // Legacy, will be migrated
-}
-
 const DEFAULT_SETTINGS: ChessPluginSettings = {
   defaultFlipped: false,
   defaultBoardSize: 500,
@@ -51,8 +45,7 @@ const DEFAULT_SETTINGS: ChessPluginSettings = {
   animationDuration: 100 // Default 100ms animation
 }
 
-// Annotations folder path within the plugin directory (legacy, for migration)
-const ANNOTATIONS_FOLDER = '.obsidian/plugins/chess-analysis/annotations';
+// Note: ANNOTATIONS_FOLDER will be constructed dynamically using this.app.vault.configDir
 
 // Context info for each board to enable inline saving
 interface BoardContextInfo {
@@ -128,15 +121,16 @@ export default class ChessPlugin extends Plugin {
     this.addSettingTab(new ChessSettingTab(this.app, this));
   }
 
-  async onunload() {
+  onunload() {
     // Save any pending data before unloading
     for (const [boardId, timeout] of this.saveTimeouts) {
       clearTimeout(timeout);
-      await this.saveBoardData(boardId);
+      // Note: Cannot await in onunload (must return void), save happens synchronously
+      this.saveBoardData(boardId);
     }
     this.saveTimeouts.clear();
     this.boardContextCache.clear();
-    
+
     // Remove all document event listeners
     for (const [boardId, listeners] of this.documentListeners) {
       for (const { type, handler } of listeners) {
@@ -144,7 +138,7 @@ export default class ChessPlugin extends Plugin {
       }
     }
     this.documentListeners.clear();
-    
+
     // Terminate all engine workers
     for (const [boardId, engineState] of this.engineCache) {
       if (engineState.worker) {
@@ -180,24 +174,30 @@ export default class ChessPlugin extends Plugin {
     }
   }
   
+  // Get the annotations folder path using configDir
+  getAnnotationsFolder(): string {
+    return `${this.app.vault.configDir}/plugins/chess-analysis/annotations`;
+  }
+
   // Ensure the annotations folder exists (legacy, only used for migration fallback)
   async ensureAnnotationsFolder() {
     const adapter = this.app.vault.adapter;
+    const annotationsFolder = this.getAnnotationsFolder();
     try {
-      const exists = await adapter.exists(ANNOTATIONS_FOLDER);
+      const exists = await adapter.exists(annotationsFolder);
       if (!exists) {
-        await adapter.mkdir(ANNOTATIONS_FOLDER);
+        await adapter.mkdir(annotationsFolder);
       }
     } catch (e) {
       console.error('Chess plugin: Error creating annotations folder:', e);
     }
   }
-  
+
   // Get the file path for a board's data
   getBoardFilePath(boardId: string): string {
     // Sanitize boardId for use as filename
     const safeId = boardId.replace(/[^a-zA-Z0-9-_]/g, '_');
-    return `${ANNOTATIONS_FOLDER}/${safeId}.json`;
+    return `${this.getAnnotationsFolder()}/${safeId}.json`;
   }
 
   renderChessBoard(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext) {
@@ -245,8 +245,8 @@ export default class ChessPlugin extends Plugin {
     this.boardContextCache.set(boardId, { ctx, pgnSource });
     
     // Get vault adapter
-    const adapter = this.app.vault.adapter as any;
-    const pluginPath = '.obsidian/plugins/chess-analysis/';
+    const adapter = this.app.vault.adapter;
+    const pluginPath = `${this.app.vault.configDir}/plugins/chess-analysis/`;
     
     // Load board data: prefer inline data, fall back to file-based data for migration
     this.loadBoardDataWithInline(boardId, inlineData).then((boardData) => {
@@ -255,6 +255,8 @@ export default class ChessPlugin extends Plugin {
         whiteElo, blackElo, whiteName, blackName, adapter, pluginPath, boardData,
         ctx, pgnSource, initialTurn
       );
+    }).catch((e) => {
+      console.error('Chess plugin: Error loading board data:', e);
     });
   }
   
@@ -388,7 +390,6 @@ export default class ChessPlugin extends Plugin {
     let isCheckmate = false;
     let isEditingNotes = false; // Track notes editing state across renders
     let isManualMove = false; // Track if current move is manual (drag/click) - no animation
-    let animatingPiece: HTMLElement | null = null; // Track currently animating piece
     // manualMoveCount is now initialized above from cache or set to 0
 
     // Engine state - use cached state to persist across re-renders
@@ -416,9 +417,7 @@ export default class ChessPlugin extends Plugin {
     const setEngineBestMove = (m: { from: [number, number], to: [number, number] } | null) => { cachedEngine!.bestMove = m; };
     const getEngineDepth = () => cachedEngine!.depth;
     const setEngineDepth = (d: number) => { cachedEngine!.depth = d; };
-    const getEngineLoading = () => cachedEngine!.loading;
     const setEngineLoading = (l: boolean) => { cachedEngine!.loading = l; };
-    const getEngineError = () => cachedEngine!.error;
     const setEngineError = (e: string | null) => { cachedEngine!.error = e; };
     const getCurrentAnalysisFen = () => cachedEngine!.currentFen;
     const setCurrentAnalysisFen = (f: string) => { cachedEngine!.currentFen = f; };
@@ -512,9 +511,6 @@ export default class ChessPlugin extends Plugin {
         setEngineLoading(true);
         
         // Use the stockfish.js from the plugin folder or CDN
-        // For Obsidian, we'll try to load from plugin folder first
-        const stockfishPath = `${pluginPath}stockfish/stockfish.js`;
-        
         // Check if we can use the local stockfish, otherwise fall back to a basic eval
         let worker: Worker;
         try {
@@ -548,16 +544,14 @@ export default class ChessPlugin extends Plugin {
               const depthMatch = line.match(/depth (\d+)/);
               const scoreMatch = line.match(/score (cp|mate) (-?\d+)/);
               const pvMatch = line.match(/pv ([a-h][1-8][a-h][1-8])/);
-              
-              let depthChanged = false;
+
               let scoreChanged = false;
               let bestMoveChanged = false;
-              
+
               if (depthMatch) {
                 const newDepth = parseInt(depthMatch[1]);
                 if (newDepth !== getEngineDepth()) {
                   setEngineDepth(newDepth);
-                  depthChanged = true;
                 }
               }
               
@@ -677,40 +671,30 @@ export default class ChessPlugin extends Plugin {
       worker.postMessage(`go depth ${this.settings.engineDepth}`);
     };
 
-    const stopEngine = () => {
-      const worker = getEngineWorker();
-      if (worker) {
-        worker.postMessage('stop');
-        worker.postMessage('quit');
-        worker.terminate();
-        setEngineWorker(null);
-      }
-    };
-
     const updateEvalBar = () => {
       // Find the current container by boardId (not the captured reference which may be stale)
       const currentContainer = document.querySelector(`[data-board-id="${boardId}"]`) as HTMLElement;
       if (!currentContainer) return;
-      
+
       const evalBar = currentContainer.querySelector('.chess-eval-bar-fill') as HTMLElement;
       const evalText = currentContainer.querySelector('.chess-eval-text') as HTMLElement;
-      
+
       if (!evalBar || !evalText) return;
       
       const engineEval = getEngineEval();
       if (engineEval === null) {
-        evalBar.style.height = '50%';
+        evalBar.setCssStyles({ height: '50%' });
         evalText.textContent = '...';
         return;
       }
-      
+
       // Convert centipawns to percentage (sigmoid-like scaling)
       // At +/- 500cp, bar is at ~90%/10%
       const sigmoid = (x: number) => 1 / (1 + Math.exp(-x / 250));
       const percentage = sigmoid(engineEval) * 100;
-      
+
       // The white portion fills from bottom
-      evalBar.style.height = `${percentage}%`;
+      evalBar.setCssStyles({ height: `${percentage}%` });
       
       // Format eval text
       let evalString: string;
@@ -777,22 +761,23 @@ export default class ChessPlugin extends Plugin {
       let boardEl: HTMLElement | null = null;
       let svgOverlay: SVGSVGElement | null = null;
       let heightResizer: HTMLElement | null = null;
-      let saveTimeout: NodeJS.Timeout | null = null;
-      
+
       if (!existingLayout) {
         // First render - create structure
         container.empty();
         
         // Set container height
-        container.style.height = `${totalHeight}px`;
-        container.style.minHeight = `${totalHeight}px`;
+        container.setCssStyles({
+          height: `${totalHeight}px`,
+          minHeight: `${totalHeight}px`
+        });
         
         layout = container.createDiv({ cls: 'chess-layout' });
         
         boardSection = layout.createDiv({ cls: 'chess-board-section' });
         // Only set fixed width on desktop - mobile uses CSS 100% width
         if (window.innerWidth >= 1024) {
-          boardSection.style.width = `${boardWidth}px`;
+          boardSection.setCssStyles({ width: `${boardWidth}px` });
         }
         
         // Board resizer (between board and info sections)
@@ -807,7 +792,7 @@ export default class ChessPlugin extends Plugin {
           startX = e.clientX;
           startBoardWidth = boardSection.offsetWidth;
           startInfoWidth = infoSection?.offsetWidth || 0;
-          document.body.style.cursor = 'ew-resize';
+          document.body.setCssStyles({ cursor: 'ew-resize' });
           // Update cache to mark resize as active
           this.resizeStateCache.set(boardId, {
             boardWidth, infoWidth, totalHeight, moveListHeight,
@@ -824,7 +809,7 @@ export default class ChessPlugin extends Plugin {
           const diff = e.clientX - startX;
           const newBoardWidth = Math.max(250, Math.min(1000, startBoardWidth + diff));
           boardWidth = newBoardWidth;
-          boardSection.style.width = `${newBoardWidth}px`;
+          boardSection.setCssStyles({ width: `${newBoardWidth}px` });
           
           // Update cache with current values during drag
           this.resizeStateCache.set(boardId, {
@@ -837,26 +822,28 @@ export default class ChessPlugin extends Plugin {
           
           // Only update gameInfoSection width if it's visible
           if (gameInfoSection && gameInfoSection.style.display !== 'none') {
-            gameInfoSection.style.width = `${newBoardWidth}px`;
+            gameInfoSection.setCssStyles({ width: `${newBoardWidth}px` });
           }
-          
+
           // Force board wrapper to update without full render
           // Must match the calculation in render()
           const evalBarWidth = this.settings.enableEngine ? 20 : 0;
           const availableWidth = newBoardWidth - 32 - evalBarWidth;
-          
+
           if (boardWrapper) {
-            boardWrapper.style.width = `${availableWidth}px`;
-            boardWrapper.style.height = `${availableWidth}px`;
-            boardWrapper.style.maxWidth = `${availableWidth}px`;
-            boardWrapper.style.maxHeight = `${availableWidth}px`;
+            boardWrapper.setCssStyles({
+              width: `${availableWidth}px`,
+              height: `${availableWidth}px`,
+              maxWidth: `${availableWidth}px`,
+              maxHeight: `${availableWidth}px`
+            });
           }
         };
         
         const boardResizeUpHandler = () => {
           if (isResizingBoard) {
             isResizingBoard = false;
-            document.body.style.cursor = '';
+            document.body.setCssStyles({ cursor: '' });
             // Clear the resize state cache since resize is complete
             this.resizeStateCache.delete(boardId);
             // Save move list scroll position to cache BEFORE saving sizes
@@ -881,7 +868,7 @@ export default class ChessPlugin extends Plugin {
         gameInfoSection = layout.createDiv({ cls: 'chess-board-info-section' });
         // Only set fixed width on desktop - mobile uses CSS 100% width
         if (window.innerWidth >= 1024) {
-          gameInfoSection.style.width = `${boardWidth}px`;
+          gameInfoSection.setCssStyles({ width: `${boardWidth}px` });
         }
         
         // Add height resizer at the bottom of the entire container
@@ -894,7 +881,7 @@ export default class ChessPlugin extends Plugin {
           isResizingHeight = true;
           startY = e.clientY;
           startHeight = container.offsetHeight;
-          document.body.style.cursor = 'ns-resize';
+          document.body.setCssStyles({ cursor: 'ns-resize' });
           // Update cache to mark resize as active
           this.resizeStateCache.set(boardId, {
             boardWidth, infoWidth, totalHeight, moveListHeight,
@@ -911,8 +898,10 @@ export default class ChessPlugin extends Plugin {
           const diff = e.clientY - startY;
           const newHeight = Math.max(300, Math.min(1200, startHeight + diff));
           totalHeight = newHeight;
-          container.style.height = `${newHeight}px`;
-          container.style.minHeight = `${newHeight}px`;
+          container.setCssStyles({
+            height: `${newHeight}px`,
+            minHeight: `${newHeight}px`
+          });
           
           // Update cache with current values during drag
           this.resizeStateCache.set(boardId, {
@@ -927,7 +916,7 @@ export default class ChessPlugin extends Plugin {
         const heightResizeUpHandler = () => {
           if (isResizingHeight) {
             isResizingHeight = false;
-            document.body.style.cursor = '';
+            document.body.setCssStyles({ cursor: '' });
             // Clear the resize state cache since resize is complete
             this.resizeStateCache.delete(boardId);
             // Save move list scroll position to cache BEFORE saving sizes
@@ -1328,10 +1317,12 @@ export default class ChessPlugin extends Plugin {
       const padding = 32; // Account for padding (1rem * 2)
       const availableWidth = Math.max(200, sectionWidth - padding - evalBarWidth);
       
-      boardWrapper.style.width = `${availableWidth}px`;
-      boardWrapper.style.height = `${availableWidth}px`;
-      boardWrapper.style.maxWidth = `${availableWidth}px`;
-      boardWrapper.style.maxHeight = `${availableWidth}px`;
+      boardWrapper.setCssStyles({
+        width: `${availableWidth}px`,
+        height: `${availableWidth}px`,
+        maxWidth: `${availableWidth}px`,
+        maxHeight: `${availableWidth}px`
+      });
       
       // Calculate piece size based on wrapper size
       const squareSize = availableWidth / 8;
@@ -1491,7 +1482,7 @@ export default class ChessPlugin extends Plugin {
               draggedPiece.element.remove();
             }
             if (draggedPiece.originalElement) {
-              draggedPiece.originalElement.style.opacity = '';
+              draggedPiece.originalElement.setCssStyles({ opacity: '' });
             }
             draggedPiece = null;
           }
@@ -1507,24 +1498,27 @@ export default class ChessPlugin extends Plugin {
           // Clone the piece for dragging
           const dragClone = document.createElement('div');
           dragClone.className = 'chess-piece chess-piece-dragging';
-          dragClone.style.position = 'fixed';
-          dragClone.style.pointerEvents = 'none';
-          dragClone.style.zIndex = '10000';
-          dragClone.style.width = `${actualSquareSize}px`;
-          dragClone.style.height = `${actualSquareSize}px`;
-          dragClone.style.opacity = '1';
-          
+
           // Copy the background image style from the original piece
           const computedStyle = window.getComputedStyle(pieceEl);
-          dragClone.style.backgroundImage = computedStyle.backgroundImage;
-          dragClone.style.backgroundSize = computedStyle.backgroundSize || '80%';
-          dragClone.style.backgroundPosition = computedStyle.backgroundPosition || 'center';
-          dragClone.style.backgroundRepeat = computedStyle.backgroundRepeat || 'no-repeat';
-          
+
           // Position the clone CENTERED on the cursor immediately
           const halfSize = actualSquareSize / 2;
-          dragClone.style.left = `${mouseX - halfSize}px`;
-          dragClone.style.top = `${mouseY - halfSize}px`;
+
+          dragClone.setCssStyles({
+            position: 'fixed',
+            pointerEvents: 'none',
+            zIndex: '10000',
+            width: `${actualSquareSize}px`,
+            height: `${actualSquareSize}px`,
+            opacity: '1',
+            backgroundImage: computedStyle.backgroundImage,
+            backgroundSize: computedStyle.backgroundSize || '80%',
+            backgroundPosition: computedStyle.backgroundPosition || 'center',
+            backgroundRepeat: computedStyle.backgroundRepeat || 'no-repeat',
+            left: `${mouseX - halfSize}px`,
+            top: `${mouseY - halfSize}px`
+          });
           
           document.body.appendChild(dragClone);
           
@@ -1538,7 +1532,7 @@ export default class ChessPlugin extends Plugin {
           };
           
           // Hide original piece
-          pieceEl.style.opacity = '0.3';
+          pieceEl.setCssStyles({ opacity: '0.3' });
           
           // Update square classes directly without full render (to show legal moves and selection)
           if (boardEl) {
@@ -1579,7 +1573,7 @@ export default class ChessPlugin extends Plugin {
             
             // Restore original piece opacity using stored reference
             if (originalElement) {
-              originalElement.style.opacity = '';
+              originalElement.setCssStyles({ opacity: '' });
             }
             
             if (this.isLegalMove(currentBoard, fromRow, fromCol, row, col)) {
@@ -1648,7 +1642,7 @@ export default class ChessPlugin extends Plugin {
             
             // Restore original piece opacity using stored reference
             if (originalElement) {
-              originalElement.style.opacity = '';
+              originalElement.setCssStyles({ opacity: '' });
             }
             
             draggedPiece = null;
@@ -1802,7 +1796,7 @@ export default class ChessPlugin extends Plugin {
         (whiteClockDiv.querySelector('.chess-clock-time') as HTMLElement).textContent = this.formatTime(whiteTime);
         const whiteEloEl = whiteClockDiv.querySelector('.chess-clock-elo') as HTMLElement;
         whiteEloEl.textContent = whiteElo ? `(${whiteElo})` : '';
-        whiteEloEl.style.display = whiteElo ? 'block' : 'none';
+        whiteEloEl.setCssStyles({ display: whiteElo ? 'block' : 'none' });
         
         // Update black clock
         blackClockDiv.className = `chess-clock chess-clock-black${isBlackTurn ? ' active' : ''}`;
@@ -1810,7 +1804,7 @@ export default class ChessPlugin extends Plugin {
         (blackClockDiv.querySelector('.chess-clock-time') as HTMLElement).textContent = this.formatTime(blackTime);
         const blackEloEl = blackClockDiv.querySelector('.chess-clock-elo') as HTMLElement;
         blackEloEl.textContent = blackElo ? `(${blackElo})` : '';
-        blackEloEl.style.display = blackElo ? 'block' : 'none';
+        blackEloEl.setCssStyles({ display: blackElo ? 'block' : 'none' });
       }
 
       // Current FEN section - NOW IN INFO SECTION (swapped with Game Info)
@@ -1824,7 +1818,7 @@ export default class ChessPlugin extends Plugin {
       const fenString = this.boardToFEN(currentBoard, fenTurn);
       copyBtn.onclick = async () => {
         await navigator.clipboard.writeText(fenString);
-        copyBtn.textContent = 'Copied!';
+        copyBtn.textContent = 'Copied';
         setTimeout(() => {
           copyBtn.textContent = 'Copy';
         }, 2000);
@@ -1835,7 +1829,7 @@ export default class ChessPlugin extends Plugin {
       // Move list in 2-column format
       if (moveHistory.length > 0) {
         const moveList = infoSection.createDiv({ cls: 'chess-move-list' });
-        moveList.style.height = `${moveListHeight}px`;
+        moveList.setCssStyles({ height: `${moveListHeight}px` });
         // Note: min/max heights are handled by CSS to allow proper flex shrinking
         
         const moveHeader = moveList.createDiv({ cls: 'chess-section-header' });
@@ -1882,10 +1876,10 @@ export default class ChessPlugin extends Plugin {
         for (let i = 0; i < moveHistory.length; i += 2) {
           const moveRow = list.createDiv({ cls: 'chess-move-row' });
           const moveNum = Math.floor(i / 2) + 1;
-          
+
           // Move number
-          const numSpan = moveRow.createEl('span', { text: `${moveNum}.`, cls: 'chess-move-number' });
-          
+          moveRow.createEl('span', { text: `${moveNum}.`, cls: 'chess-move-number' });
+
           // White's move
           const whiteMoveHasAnnotations = !!(moveAnnotations[i] && 
             ((moveAnnotations[i].arrows && moveAnnotations[i].arrows.length > 0) || 
@@ -1953,7 +1947,7 @@ export default class ChessPlugin extends Plugin {
           isResizingMovesNotes = true;
           startYMovesNotes = e.clientY;
           startMoveListHeight = moveList.offsetHeight;
-          document.body.style.cursor = 'ns-resize';
+          document.body.setCssStyles({ cursor: 'ns-resize' });
           // Update cache to mark resize as active
           this.resizeStateCache.set(boardId, {
             boardWidth, infoWidth, totalHeight, moveListHeight,
@@ -1979,7 +1973,7 @@ export default class ChessPlugin extends Plugin {
           const diff = e.clientY - startYMovesNotes;
           const newHeight = Math.max(60, Math.min(400, startMoveListHeight + diff));
           moveListHeight = newHeight;
-          moveList.style.height = `${newHeight}px`;
+          moveList.setCssStyles({ height: `${newHeight}px` });
           
           // Update cache with current values during drag
           this.resizeStateCache.set(boardId, {
@@ -1995,7 +1989,7 @@ export default class ChessPlugin extends Plugin {
         movesNotesResizeEndHandler = () => {
           if (isResizingMovesNotes) {
             isResizingMovesNotes = false;
-            document.body.style.cursor = '';
+            document.body.setCssStyles({ cursor: '' });
             // Clear the resize state cache since resize is complete
             this.resizeStateCache.delete(boardId);
             // Save move list scroll position to cache BEFORE saving sizes
@@ -2209,7 +2203,7 @@ export default class ChessPlugin extends Plugin {
       // Function to render notes as proper markdown with position tracking for accurate cursor placement
       // This renders markdown properly (headers without #, bold without **, etc.) but stores
       // raw position information on each element for click-to-cursor mapping
-      const renderNotes = async () => {
+      const renderNotes = () => {
         isEditingNotes = false;
         notesEditor.empty();
         const noteText = notes[currentMove] || '';
@@ -2223,8 +2217,7 @@ export default class ChessPlugin extends Plugin {
           
           for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
             const line = lines[lineIdx];
-            const lineStartPos = rawPos;
-            
+
             if (line === '') {
               // Empty line
               const lineEl = displayDiv.createDiv({ cls: 'chess-notes-line chess-notes-empty-line' });
@@ -2354,8 +2347,10 @@ export default class ChessPlugin extends Plugin {
             cls: 'chess-notes-input-inline'
           });
           textarea.value = cachedEditState.textValue;
-          textarea.style.resize = 'none';
-          textarea.style.boxSizing = 'border-box';
+          textarea.setCssStyles({
+            resize: 'none',
+            boxSizing: 'border-box'
+          });
           
           // Restore cursor position and scroll
           textarea.focus({ preventScroll: true });
@@ -2476,21 +2471,21 @@ export default class ChessPlugin extends Plugin {
         clickY: number,
         rawMarkdown: string
       ): number => {
-        // Use caretRangeFromPoint to find which element/text was clicked
+        // Use caretPositionFromPoint to find which element/text was clicked
         let clickedNode: Node | null = null;
         let clickedOffset = 0;
-        
-        if (document.caretRangeFromPoint) {
-          const range = document.caretRangeFromPoint(clickX, clickY);
-          if (range) {
-            clickedNode = range.startContainer;
-            clickedOffset = range.startOffset;
-          }
-        } else if ((document as any).caretPositionFromPoint) {
-          const pos = (document as any).caretPositionFromPoint(clickX, clickY);
+
+        if ((document as Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null }).caretPositionFromPoint) {
+          const pos = (document as Document & { caretPositionFromPoint: (x: number, y: number) => { offsetNode: Node; offset: number } | null }).caretPositionFromPoint(clickX, clickY);
           if (pos) {
             clickedNode = pos.offsetNode;
             clickedOffset = pos.offset;
+          }
+        } else if ((document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }).caretRangeFromPoint) {
+          const range = (document as Document & { caretRangeFromPoint: (x: number, y: number) => Range | null }).caretRangeFromPoint(clickX, clickY);
+          if (range) {
+            clickedNode = range.startContainer;
+            clickedOffset = range.startOffset;
           }
         }
         
@@ -2526,10 +2521,9 @@ export default class ChessPlugin extends Plugin {
           // But for elements where syntax was stripped (like headers, bold, etc.),
           // the visible text is shorter than the raw text range
           // In those cases, we proportionally map the position
-          
-          const rawLength = rawEnd - rawStart;
+
           const visibleLength = visibleText.length;
-          
+
           if (visibleLength === 0) {
             return rawStart;
           }
@@ -2542,7 +2536,7 @@ export default class ChessPlugin extends Plugin {
             // Find offset by walking text nodes in this element
             const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
             let node;
-            while (node = walker.nextNode()) {
+            while ((node = walker.nextNode())) {
               if (node === clickedNode) {
                 offsetInElement += clickedOffset;
                 break;
@@ -2703,8 +2697,10 @@ export default class ChessPlugin extends Plugin {
             cls: 'chess-notes-input-inline'
           });
           textarea.value = rawMarkdownText;
-          textarea.style.resize = 'none';
-          textarea.style.boxSizing = 'border-box';
+          textarea.setCssStyles({
+            resize: 'none',
+            boxSizing: 'border-box'
+          });
           
           // Focus and set cursor position
           textarea.focus({ preventScroll: true });
@@ -2760,8 +2756,7 @@ export default class ChessPlugin extends Plugin {
               const newActiveElement = document.activeElement;
               const isDocumentHidden = document.hidden;
               const isFocusOnBody = newActiveElement === document.body || newActiveElement === document.documentElement;
-              const isFocusInContainer = newActiveElement && container.contains(newActiveElement);
-              
+
               // True window blur: document is hidden OR focus is on body AND we're not focused within the container
               // AND the textarea no longer has focus (someone else has it or nobody does)
               const isWindowBlur = isDocumentHidden || (isFocusOnBody && !document.hasFocus());
@@ -2849,7 +2844,7 @@ export default class ChessPlugin extends Plugin {
 
       // Game info - NOW IN GAME INFO SECTION BELOW BOARD (swapped with FEN)
       if (Object.keys(pgnData).length > 0) {
-        gameInfoSection.style.display = '';
+        gameInfoSection.setCssStyles({ display: '' });
         const info = gameInfoSection.createDiv({ cls: 'chess-game-info' });
         info.createEl('h4', { text: 'Game Info' });
         const infoList = info.createDiv({ cls: 'chess-info-list' });
@@ -2868,7 +2863,7 @@ export default class ChessPlugin extends Plugin {
         }
       } else {
         // Hide the game info section when there's no data
-        gameInfoSection.style.display = 'none';
+        gameInfoSection.setCssStyles({ display: 'none' });
       }
       
       // Redraw engine best move arrow (it gets cleared by drawArrows)
@@ -2887,12 +2882,14 @@ export default class ChessPlugin extends Plugin {
           // Use getBoundingClientRect for accurate size, fallback to style parsing
           const rect = draggedPiece.element.getBoundingClientRect();
           const size = rect.width || parseInt(draggedPiece.element.style.width) || 60;
-          draggedPiece.element.style.left = `${e.clientX - size / 2}px`;
-          draggedPiece.element.style.top = `${e.clientY - size / 2}px`;
+          draggedPiece.element.setCssStyles({
+            left: `${e.clientX - size / 2}px`,
+            top: `${e.clientY - size / 2}px`
+          });
         } else {
           // Element was removed but drag state wasn't cleaned up - fix it
           if (draggedPiece.originalElement) {
-            draggedPiece.originalElement.style.opacity = '';
+            draggedPiece.originalElement.setCssStyles({ opacity: '' });
           }
           draggedPiece = null;
         }
@@ -2916,10 +2913,12 @@ export default class ChessPlugin extends Plugin {
             const availW = Math.max(200, secW - padW - evalW);
             const curW = parseInt(bWrapper.style.width) || 0;
             if (Math.abs(availW - curW) > 5) {
-              bWrapper.style.width = `${availW}px`;
-              bWrapper.style.height = `${availW}px`;
-              bWrapper.style.maxWidth = `${availW}px`;
-              bWrapper.style.maxHeight = `${availW}px`;
+              bWrapper.setCssStyles({
+                width: `${availW}px`,
+                height: `${availW}px`,
+                maxWidth: `${availW}px`,
+                maxHeight: `${availW}px`
+              });
             }
           }
         });
@@ -2953,7 +2952,7 @@ export default class ChessPlugin extends Plugin {
     svg.setAttribute('class', 'chess-svg-overlay');
     svg.setAttribute('viewBox', '0 0 800 800');
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-    svg.style.pointerEvents = 'none';
+    svg.setCssStyles({ pointerEvents: 'none' });
     
     // We don't use markers because they have rendering issues on mobile
     // Instead, arrows are drawn as paths with the arrowhead built-in
@@ -3046,24 +3045,28 @@ export default class ChessPlugin extends Plugin {
     const deltaY = (displayToRow - displayFromRow) * squareSize;
     
     // Apply animation
-    pieceEl.style.transition = `transform ${duration}ms ease-out`;
-    pieceEl.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
-    pieceEl.style.zIndex = '100';
+    pieceEl.setCssStyles({
+      transition: `transform ${duration}ms ease-out`,
+      transform: `translate(${deltaX}px, ${deltaY}px)`
+    });
+    pieceEl.setCssStyles({ zIndex: '100' });
     
     setTimeout(() => {
       // Reset styles before callback
-      pieceEl.style.transition = '';
-      pieceEl.style.transform = '';
-      pieceEl.style.zIndex = '';
+      pieceEl.setCssStyles({
+        transition: '',
+        transform: '',
+        zIndex: ''
+      });
       onComplete();
     }, duration);
   }
 
   updateBoard(
-    board: (string | null)[][], 
+    board: (string | null)[][],
     container: HTMLElement,
     svgOverlay: SVGSVGElement,
-    flipped: boolean, 
+    flipped: boolean,
     lastMove: { from: number[], to: number[] } | null,
     selectedSquare: number[] | null,
     arrows: { from: [number, number], to: [number, number] }[],
@@ -3072,7 +3075,7 @@ export default class ChessPlugin extends Plugin {
     isInCheck: boolean,
     isCheckmate: boolean,
     turnColor: string,
-    adapter: any,
+    adapter: DataAdapter,
     pluginPath: string,
     pieceSize: number,
     onSquareClick: (row: number, col: number) => void,
@@ -3233,8 +3236,8 @@ export default class ChessPlugin extends Plugin {
         square.onclick = (e) => {
           // Only handle if the click target is the square itself (not a piece)
           if (e.target === square) {
-            const r = parseInt(square.dataset.row!);
-            const c = parseInt(square.dataset.col!);
+            const r = parseInt(square.dataset.row);
+            const c = parseInt(square.dataset.col);
             onSquareClick(r, c);
           }
         };
@@ -3314,11 +3317,13 @@ export default class ChessPlugin extends Plugin {
             const svgPath = `${pluginPath}pieces/${svgFilename}`;
             const resourceUrl = adapter.getResourcePath(svgPath);
             
-            pieceEl.style.backgroundImage = `url("${resourceUrl}")`;
-            pieceEl.style.backgroundSize = '80%';
-            pieceEl.style.backgroundPosition = 'center';
-            pieceEl.style.backgroundRepeat = 'no-repeat';
-            pieceEl.style.fontSize = `${pieceSize}px`;
+            pieceEl.setCssStyles({
+              backgroundImage: `url("${resourceUrl}")`,
+              backgroundSize: '80%',
+              backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat',
+              fontSize: `${pieceSize}px`
+            });
             
             // IMPORTANT: Disable HTML5 drag - we use custom mouse-based dragging
             pieceEl.draggable = false;
@@ -3341,9 +3346,9 @@ export default class ChessPlugin extends Plugin {
                 // Start drag if moved more than 3 pixels
                 if (!isDragging && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
                   isDragging = true;
-                  const r = parseInt(pieceEl.dataset.row!);
-                  const c = parseInt(pieceEl.dataset.col!);
-                  const p = pieceEl.dataset.piece!;
+                  const r = parseInt(pieceEl.dataset.row);
+                  const c = parseInt(pieceEl.dataset.col);
+                  const p = pieceEl.dataset.piece;
                   // NOW create the drag clone, at current mouse position
                   onDragStart(r, c, p, pieceEl, e.clientX, e.clientY);
                 }
@@ -3360,8 +3365,8 @@ export default class ChessPlugin extends Plugin {
                 
                 if (!isDragging) {
                   // This was a click, not a drag - handle as click
-                  const r = parseInt(pieceEl.dataset.row!);
-                  const c = parseInt(pieceEl.dataset.col!);
+                  const r = parseInt(pieceEl.dataset.row);
+                  const c = parseInt(pieceEl.dataset.col);
                   onSquareClick(r, c);
                 } else {
                   // This was a drag - find the target square
@@ -4637,7 +4642,7 @@ export default class ChessPlugin extends Plugin {
       if (migrated) {
         // Remove legacy boardData from data.json
         await this.saveData({ settings: this.settings });
-        console.log('Chess plugin: Migrated legacy data to individual annotation files');
+        console.warn('Chess plugin: Migrated legacy data to individual annotation files');
       }
     } catch (e) {
       console.error('Chess plugin: Error during legacy data migration:', e);
@@ -4648,26 +4653,26 @@ export default class ChessPlugin extends Plugin {
   async migrateFromLocalStorage() {
     try {
       let migrated = false;
-      
+
       // Collect all data from localStorage
-      const sizesData = localStorage.getItem('chess-board-sizes');
-      const annotationsData = localStorage.getItem('chess-board-annotations');
-      const notesData = localStorage.getItem('chess-board-notes');
-      
+      const sizesData = this.app.loadLocalStorage('chess-board-sizes');
+      const annotationsData = this.app.loadLocalStorage('chess-board-annotations');
+      const notesData = this.app.loadLocalStorage('chess-board-notes');
+
       const sizes = sizesData ? JSON.parse(sizesData) : {};
       const annotations = annotationsData ? JSON.parse(annotationsData) : {};
       const notes = notesData ? JSON.parse(notesData) : {};
-      
+
       const boardIds = new Set([
         ...Object.keys(sizes),
         ...Object.keys(annotations),
         ...Object.keys(notes)
       ]);
-      
+
       for (const boardId of boardIds) {
         const filePath = this.getBoardFilePath(boardId);
         const adapter = this.app.vault.adapter;
-        
+
         // Only migrate if the individual file doesn't exist yet
         const exists = await adapter.exists(filePath);
         if (!exists) {
@@ -4676,7 +4681,7 @@ export default class ChessPlugin extends Plugin {
             annotations: annotations[boardId],
             notes: notes[boardId]
           };
-          
+
           if (boardData.sizes || boardData.annotations || boardData.notes) {
             this.boardDataCache.set(boardId, boardData);
             await this.saveBoardData(boardId);
@@ -4684,13 +4689,13 @@ export default class ChessPlugin extends Plugin {
           }
         }
       }
-      
+
       if (migrated) {
         // Clear localStorage after successful migration
-        localStorage.removeItem('chess-board-sizes');
-        localStorage.removeItem('chess-board-annotations');
-        localStorage.removeItem('chess-board-notes');
-        console.log('Chess plugin: Migrated data from localStorage to individual annotation files');
+        this.app.saveLocalStorage('chess-board-sizes', null);
+        this.app.saveLocalStorage('chess-board-annotations', null);
+        this.app.saveLocalStorage('chess-board-notes', null);
+        console.warn('Chess plugin: Migrated data from localStorage to individual annotation files');
       }
     } catch (e) {
       console.error('Chess plugin: Error during localStorage migration:', e);
@@ -4740,7 +4745,7 @@ export default class ChessPlugin extends Plugin {
 
   saveBoardAnnotations(boardId: string, annotations: { [key: number]: { arrows: { from: [number, number], to: [number, number] }[], highlights: Set<string> } }) {
     // Convert Sets to arrays for JSON serialization
-    const serializable: { [key: number]: { arrows: any[], highlights: string[] } } = {};
+    const serializable: { [key: number]: { arrows: { from: [number, number], to: [number, number] }[], highlights: string[] } } = {};
     for (const [key, value] of Object.entries(annotations)) {
       serializable[parseInt(key)] = {
         arrows: value.arrows,
@@ -4854,8 +4859,10 @@ class ChessSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
     
-    containerEl.createEl('h3', { text: 'Engine Analysis' });
-    
+    new Setting(containerEl)
+      .setName('Engine analysis')
+      .setHeading();
+
     new Setting(containerEl)
       .setName('Enable engine analysis')
       .setDesc('Show evaluation bar and best move suggestions (requires internet for first load)')

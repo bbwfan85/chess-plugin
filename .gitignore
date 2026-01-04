@@ -1,11 +1,14 @@
 # Node
 node_modules/
 npm-debug.log*
+release-assets/
+.claude/
 
 # Build
 main.js
 main.js.map
 *.js.map
+PUBLISH_STEPS.md
 
 # macOS
 .DS_Store
