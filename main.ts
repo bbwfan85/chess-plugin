@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, MarkdownPostProcessorContext, DataAdapter } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, MarkdownPostProcessorContext, DataAdapter, TFile } from 'obsidian';
 
 interface ChessPluginSettings {
   defaultFlipped: boolean;
@@ -2498,17 +2498,19 @@ export default class ChessPlugin extends Plugin {
         let clickedNode: Node | null = null;
         let clickedOffset = 0;
 
+        // Use caretPositionFromPoint (modern API) with fallback to elementFromPoint
         if ((document as Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null }).caretPositionFromPoint) {
           const pos = (document as Document & { caretPositionFromPoint: (x: number, y: number) => { offsetNode: Node; offset: number } | null }).caretPositionFromPoint(clickX, clickY);
           if (pos) {
             clickedNode = pos.offsetNode;
             clickedOffset = pos.offset;
           }
-        } else if ((document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }).caretRangeFromPoint) {
-          const range = (document as Document & { caretRangeFromPoint: (x: number, y: number) => Range | null }).caretRangeFromPoint(clickX, clickY);
-          if (range) {
-            clickedNode = range.startContainer;
-            clickedOffset = range.startOffset;
+        } else {
+          // Fallback: use elementFromPoint to get the element
+          const element = document.elementFromPoint(clickX, clickY);
+          if (element && element.firstChild) {
+            clickedNode = element.firstChild;
+            clickedOffset = 0;
           }
         }
         
@@ -2869,7 +2871,7 @@ export default class ChessPlugin extends Plugin {
       if (Object.keys(pgnData).length > 0) {
         gameInfoSection.setCssStyles({ display: '' });
         const info = gameInfoSection.createDiv({ cls: 'chess-game-info' });
-        info.createEl('h4', { text: 'Game Info' });
+        info.createEl('h4', { text: 'Game info' });
         const infoList = info.createDiv({ cls: 'chess-info-list' });
         for (const [key, value] of Object.entries(pgnData)) {
           const item = infoList.createDiv({ cls: 'chess-info-item' });
@@ -3440,7 +3442,7 @@ export default class ChessPlugin extends Plugin {
 
         // Update labels - only add if they don't exist
         if (rowIdx === 7) {
-          let fileLabel = square.querySelector('.chess-file-label') as HTMLElement;
+          let fileLabel = square.querySelector('.chess-file-label');
           if (!fileLabel) {
             fileLabel = square.createDiv({ cls: 'chess-file-label', text: files[colIdx] });
           } else {
@@ -3448,7 +3450,7 @@ export default class ChessPlugin extends Plugin {
           }
         }
         if (colIdx === 0) {
-          let rankLabel = square.querySelector('.chess-rank-label') as HTMLElement;
+          let rankLabel = square.querySelector('.chess-rank-label');
           if (!rankLabel) {
             rankLabel = square.createDiv({ cls: 'chess-rank-label', text: ranks[rowIdx] });
           } else {
@@ -4410,7 +4412,7 @@ export default class ChessPlugin extends Plugin {
       }
       
       // Read current file content
-      const content = await this.app.vault.read(file as any);
+      const content = await this.app.vault.read(file as TFile);
       
       // Prepare data delimiter
       const dataDelimiter = '<!--chess-data-->';
@@ -4507,7 +4509,7 @@ export default class ChessPlugin extends Plugin {
       if (foundMatch) {
         if (newContent !== content) {
           // Actually write the changes
-          await this.app.vault.modify(file as any, newContent);
+          await this.app.vault.modify(file as TFile, newContent);
         }
         // Success - don't fall back to file save
         return;
@@ -4764,8 +4766,8 @@ export default class ChessPlugin extends Plugin {
       const result: { [key: number]: { arrows: { from: [number, number], to: [number, number] }[], highlights: Set<string> } } = {};
       for (const [key, value] of Object.entries(boardAnnotations)) {
         result[parseInt(key)] = {
-          arrows: (value as any).arrows || [],
-          highlights: new Set((value as any).highlights || [])
+          arrows: value.arrows || [],
+          highlights: new Set(value.highlights || [])
         };
       }
       return result;
